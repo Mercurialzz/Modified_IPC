@@ -5,7 +5,6 @@
 
 #include <Eigen/Eigen>
 #include "OsqpEigen/OsqpEigen.h"
-
 /* QP formulation:
     min 1/2* x^T H x + f^T x   subject to
     b <= Ax <= b (Ax = b),  d <= Ax <= f,  l <= x <= u
@@ -46,7 +45,7 @@ public:
     MPCPlannerClass(){}
     MPCPlannerClass(ros::NodeHandle& nh) {
         Drag_.setZero();
-
+        
         nh.param("/ipc_node/mpc/horizon", MPC_HORIZON, 5);
         nh.param("/ipc_node/mpc/step",    MPC_STEP, 0.1);
         nh.param("/ipc_node/mpc/ctrl_delay", ctrl_delay_, 0);

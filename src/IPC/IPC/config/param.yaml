@@ -1,7 +1,12 @@
 #----------------- MPC param -----------------#
 simulation:    true
 perfect_simu:  false
-frequency:     100.0
+mass:          2.4 # kg
+gra:           9.81 
+ctrl_freq_max: 100.0
+max_manual_vel: 4.0
+low_voltage:   13.2 # 4S battery
+
 ctrl_delay:    0.0
 sfc_dis:       0.3
 
@@ -15,6 +20,19 @@ yaw_gain:      0.5
 goal_x:        0.0
 goal_y:        0.0
 goal_z:        1.0
+
+rc_reverse: # *
+    roll: false
+    pitch: false
+    yaw: false
+    throttle: true
+
+auto_takeoff_land:
+    enable: true #set false when use qgc takeoff 
+    enable_auto_arm: true
+    no_RC: true # set true when sim, set false in exp
+    takeoff_height: 2.0 # m
+    takeoff_land_speed: 0.3 # m/s
 
 astar:
   resolution:  0.1

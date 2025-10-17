@@ -21,6 +21,15 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   mavros
   rosfmt
+  uav_utils
+  dynamic_reconfigure
+)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+## Generate dynamic reconfigure parameters in the 'cfg' folder
+generate_dynamic_reconfigure_options(
+  cfg/fake_rc.cfg
 )
 
 catkin_package(
@@ -29,6 +38,7 @@ catkin_package(
 
 include_directories(
   include 
+  include/${PROJECT_NAME}
   ${catkin_INCLUDE_DIRS}
   ${Eigen3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
@@ -37,6 +47,9 @@ include_directories(
 add_executable(ipc_node
   src/main.cpp
   src/planner.cpp
+  src/PX4CtrlFSM.cpp
+  src/input.cpp
+  src/param.cpp
   include/astar.cpp
   include/mpc.cpp
   include/local_astar.cpp

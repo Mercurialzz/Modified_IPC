@@ -19,34 +19,28 @@
 #include <mavros_msgs/AttitudeTarget.h>
 #include <mavros_msgs/RCIn.h>
 
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/passthrough.h>
-#include <pcl/filters/crop_box.h>
+// #include <pcl_conversions/pcl_conversions.h>
+// #include <pcl/point_cloud.h>
+// #include <pcl/point_types.h>
+// #include <pcl/filters/voxel_grid.h>
+// #include <pcl/filters/passthrough.h>
+// #include <pcl/filters/crop_box.h>
 
 #include "../include/astar.h"
 #include "../include/mpc.h"
 #include "../include/local_astar.h"
 
-enum UAVMode_e {
-    Manual  = 0,
-    Hover   = 1,
-    Takeoff = 2,
-    Land    = 3,
-    Command = 4
-};
+#include "input.h"
+#include "param.h"
+
+
 
 class PlannerClass {
 public:
     // PlannerClass() {}
     PlannerClass(ros::NodeHandle &nh) {
+
         // load param
-        double freq;
-        nh.param("/ipc_node/simulation", simu_flag_, true);
-        nh.param("/ipc_node/perfect_simu", perfect_simu_flag_, false);
-        nh.param("/ipc_node/frequency", freq, 100.0);
         nh.param("/ipc_node/ctrl_delay", ctrl_delay_, 0.1);
         nh.param("/ipc_node/sfc_dis", sfc_dis_, 0.1);
         nh.param("/ipc_node/thrust_limit", thrust_limit_, 0.5);
@@ -71,18 +65,8 @@ public:
         nh.param("/ipc_node/fsm/path_dis", path_dis_, 0.1);
 
         // instantiation
-        odom_p_ << 0, 0, 1;
         Gravity_ << 0, 0, 9.81;
-        odom_v_.setZero();
-        odom_a_.setZero();
-        imu_a_.setZero();
-        if (simu_flag_) {
-            thrust_ = 0.7;
-            mode_ = Command;
-        } else {
-            thrust_ = hover_perc_;
-            mode_ = Manual;
-        }
+        thrust_ = hover_perc_;//debug
         thr2acc_ = 9.81 / thrust_;
 
         mpc_   = std::make_shared<MPCPlannerClass>(nh);
@@ -93,19 +77,9 @@ public:
         // ros topic
         astar_pub_ = nh.advertise<visualization_msgs::Marker>("astar_path", 1);
         gird_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("grid_map", 1);
-        cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("cmd", 1);
         mpc_path_pub_ = nh.advertise<nav_msgs::Path>("mpc_path", 1);
         sfc_pub_ = nh.advertise<visualization_msgs::MarkerArray>("sfc", 1);
-        px4ctrl_pub_ = nh.advertise<mavros_msgs::AttitudeTarget>("px4ctrl", 1);
         goal_pub_ = nh.advertise<geometry_msgs::PoseStamped>("goal_pub", 1);
-
-        local_pc_sub_ = nh.subscribe<sensor_msgs::PointCloud2>("local_pc", 1, &PlannerClass::LocalPcCallback, this, ros::TransportHints().tcpNoDelay());
-        odom_sub_ = nh.subscribe<nav_msgs::Odometry>("odom", 1, &PlannerClass::OdomCallback, this, ros::TransportHints().tcpNoDelay());
-        goal_sub_ = nh.subscribe<geometry_msgs::PoseStamped>("goal", 1, &PlannerClass::GoalCallback, this, ros::TransportHints().tcpNoDelay());
-        imu_sub_ = nh.subscribe<sensor_msgs::Imu>("imu", 1, &PlannerClass::IMUCallback, this, ros::TransportHints().tcpNoDelay());
-        rc_sub_ = nh.subscribe<mavros_msgs::RCIn>("rc_in", 1, &PlannerClass::RCInCallback, this, ros::TransportHints().tcpNoDelay());
-
-        timer_ = nh.createTimer(ros::Duration(1.0/freq), &PlannerClass::TimerCallback, this, false, true);
 
         std::string file = ros::package::getPath("ipc") + "/config";
         write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
@@ -113,7 +87,15 @@ public:
         write_time_ << "mapping" << ", " << "replan" << ", " << "sfc" << ", " << "mpc" << ", " << "df" << ", " << std::endl;
     }
     ~PlannerClass() {}
-
+    void MpcCalculate(const Odom_Data_t& odom, const Eigen::Vector3d& imu_a);
+    void PointCloudCorpAndSetMap(const Odom_Data_t& odom,PointCloud_Data_t& pc2);
+    void PathReplan(bool extend, const Odom_Data_t& odom);
+    void SetSFCAndGoal(const Odom_Data_t& odom);
+    void resetThrustMapping(void)
+    {
+        thr2acc_ = 9.81 / hover_perc_;
+        P_ = 100;
+    }
 private:
     void AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale) {
         visualization_msgs::Marker node_vis; 
@@ -217,9 +199,9 @@ private:
         }
         write_time_ << std::endl;
     }
-    
-    void ComputeThrust(Eigen::Vector3d acc) {
-        const Eigen::Vector3d zB = odom_q_ * Eigen::Vector3d::UnitZ();
+
+    void ComputeThrust(Eigen::Vector3d acc, Eigen::Quaterniond q) {
+        const Eigen::Vector3d zB = q * Eigen::Vector3d::UnitZ();
         double des_acc_norm = acc.dot(zB);
         thrust_ = des_acc_norm / thr2acc_;
     }
@@ -249,15 +231,15 @@ private:
     }
     bool estimateThrustModel(const Eigen::Vector3d &est_a)
     {
-        if (hover_esti_flag_ == false) {
-            thr2acc_ = 9.81 / hover_perc_;
-            return true;
-        }
-        if (mode_ != Command) {
-            P_ = 100.0;
-            thr2acc_ = 9.81 / hover_perc_;
-            return true;
-        }
+        // if (hover_esti_flag_ == false) {
+        //     thr2acc_ = 9.81 / hover_perc_;
+        //     return true;
+        // }
+        // if (mode_ != Command) {//debug
+        //     P_ = 100.0;
+        //     thr2acc_ = 9.81 / hover_perc_;
+        //     return true;
+        // }
         ros::Time t_now = ros::Time::now();
         if (timed_thrust_.size() == 0) return false;
         std::pair<ros::Time, double> t_t = timed_thrust_.front();
@@ -291,39 +273,6 @@ private:
         }
         return false;
     }
-    void AttitudeCtrlPub(const Eigen::Quaterniond &q, const double thrust, const ros::Time &stamp) {
-        mavros_msgs::AttitudeTarget msg;
-        msg.header.stamp = stamp;
-        msg.header.frame_id = std::string("FCU");
-        msg.type_mask = mavros_msgs::AttitudeTarget::IGNORE_ROLL_RATE |
-                        mavros_msgs::AttitudeTarget::IGNORE_PITCH_RATE |
-                        mavros_msgs::AttitudeTarget::IGNORE_YAW_RATE;
-        msg.orientation.x = q.x();
-        msg.orientation.y = q.y();
-        msg.orientation.z = q.z();
-        msg.orientation.w = q.w();
-        msg.thrust = thrust;
-        if (msg.thrust < 0.1) msg.thrust = 0.1;
-        if (msg.thrust > 0.9) msg.thrust = 0.9;
-        if (mode_ == Manual) msg.thrust = 0.05;
-        if (!simu_flag_ && msg.thrust > thrust_limit_) msg.thrust = thrust_limit_;
-        px4ctrl_pub_.publish(msg);
-    }
-    void BodyrateCtrlPub(const Eigen::Vector3d &rate, const double thrust, const ros::Time &stamp) {
-        mavros_msgs::AttitudeTarget msg;
-        msg.header.stamp = stamp;
-        msg.header.frame_id = std::string("FCU");
-        msg.type_mask = mavros_msgs::AttitudeTarget::IGNORE_ATTITUDE;
-        msg.body_rate.x = rate.x();
-        msg.body_rate.y = rate.y();
-        msg.body_rate.z = rate.z();
-        msg.thrust = thrust;
-        if (msg.thrust < 0.08) msg.thrust = 0.08;
-        if (msg.thrust > 0.9) msg.thrust = 0.9;
-        if (mode_ == Manual) msg.thrust = 0.05;
-        if (!simu_flag_ && msg.thrust > thrust_limit_) msg.thrust = thrust_limit_;
-        px4ctrl_pub_.publish(msg);
-    }
 
     void OdomCallback(const nav_msgs::OdometryConstPtr& msg);
     void GoalCallback(const geometry_msgs::PoseStampedConstPtr& msg);
@@ -333,18 +282,13 @@ private:
 
     void TimerCallback(const ros::TimerEvent &);
 
-    void PathReplan(bool extend);
+    // void PathReplan(bool extend);
+
     void GeneratePolyOnPath();
     void GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
 
-    ros::Timer      timer_;
-    ros::Subscriber odom_sub_, goal_sub_, imu_sub_, local_pc_sub_, rc_sub_;
-    ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, sfc_pub_, mpc_path_pub_, px4ctrl_pub_, goal_pub_;
+    ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, sfc_pub_, mpc_path_pub_, goal_pub_;
     ros::Time       odom_time_, last_mpc_time_;
-    std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, timer_mutex_, imu_mutex_, 
-                local_pc_mutex_, rc_mutex_;
-
-    UAVMode_e mode_;
 
     bool simu_flag_, perfect_simu_flag_, pc_ctrl_flag_, hover_esti_flag_, yaw_ctrl_flag_;
     bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
@@ -360,8 +304,8 @@ private:
     std::vector<double> log_times_;
 
     Eigen::Vector3d goal_p_, map_upp_;
-    Eigen::Vector3d odom_p_, odom_v_, odom_a_, imu_a_;
-    Eigen::Quaterniond odom_q_, u_q_;
+    // Eigen::Vector3d odom_p_, odom_v_, odom_a_, imu_a_;
+    Eigen::Quaterniond  u_q_;
     Eigen::Vector3d rate_;
     double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
 
@@ -380,9 +324,9 @@ private:
     Eigen::Vector3d Gravity_;
     std::queue<std::pair<ros::Time, double>> timed_thrust_;
 
-    std::deque<pcl::PointCloud<pcl::PointXYZ>> vec_cloud_;
-    pcl::PointCloud<pcl::PointXYZ> static_map_;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
+    // std::deque<pcl::PointCloud<pcl::PointXYZ>> vec_cloud_;
+    // pcl::PointCloud<pcl::PointXYZ> static_map_;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
 
     std::shared_ptr<LoaclAstarClass> local_astar_;
     std::shared_ptr<MPCPlannerClass> mpc_;
