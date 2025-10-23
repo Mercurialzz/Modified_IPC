@@ -47,7 +47,6 @@ include_directories(
 add_executable(ipc_node
   src/main.cpp
   src/planner.cpp
-  src/PX4CtrlFSM.cpp
   src/input.cpp
   src/param.cpp
   include/astar.cpp

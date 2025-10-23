@@ -15,6 +15,30 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "max_manual_vel", max_manual_vel);
 	read_essential_param(nh, "low_voltage", low_voltage);
 
+	read_essential_param(nh, "ctrl_delay", ctrl_delay);
+	read_essential_param(nh, "sfc_dis", sfc_dis);
+	
+	read_essential_param(nh, "thrust_limit", thrust_limit);
+	read_essential_param(nh, "hover_esti", hover_esti_flag);
+	read_essential_param(nh, "hover_perc", hover_perc);
+
+	read_essential_param(nh, "yaw_ctrl_flag", yaw_ctrl_flag);
+	read_essential_param(nh, "yaw_gain", yaw_gain);
+	
+	read_essential_param(nh, "goal_x", goal_x);
+	read_essential_param(nh, "goal_y", goal_y);
+	read_essential_param(nh, "goal_z", goal_z);
+
+	read_essential_param(nh, "astar/resolution", resolution);
+	read_essential_param(nh, "astar/map_x_size", map_size.x());
+	read_essential_param(nh, "astar/map_y_size", map_size.y());
+	read_essential_param(nh, "astar/map_z_size", map_size.z());
+	read_essential_param(nh, "astar/expand_dyn", expand_dyn);
+	read_essential_param(nh, "astar/expand_fix", expand_fix);
+
+	read_essential_param(nh, "fsm/ref_dis", ref_dis);
+	read_essential_param(nh, "fsm/path_dis", path_dis);
+
 	read_essential_param(nh, "msg_timeout/odom", msg_timeout.odom);
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);
 	read_essential_param(nh, "msg_timeout/cmd", msg_timeout.cmd);

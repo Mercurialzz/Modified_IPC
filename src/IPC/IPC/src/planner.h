@@ -1,7 +1,8 @@
-#ifndef PLANNER_H
-#define PLANNER_H
+#ifndef __PLANNER_H
+#define __PLANNER_H
 
 #include <ros/ros.h>
+#include <ros/assert.h>
 #include <ros/package.h>
 
 #include <fstream>
@@ -13,18 +14,15 @@
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Imu.h>
+#include <mavros_msgs/SetMode.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <quadrotor_msgs/PositionCommand.h>
 #include <mavros_msgs/AttitudeTarget.h>
 #include <mavros_msgs/RCIn.h>
-
-// #include <pcl_conversions/pcl_conversions.h>
-// #include <pcl/point_cloud.h>
-// #include <pcl/point_types.h>
-// #include <pcl/filters/voxel_grid.h>
-// #include <pcl/filters/passthrough.h>
-// #include <pcl/filters/crop_box.h>
+#include <mavros_msgs/CommandLong.h>
+#include <mavros_msgs/CommandBool.h>
+#include <Eigen/Dense>
 
 #include "../include/astar.h"
 #include "../include/mpc.h"
@@ -33,283 +31,153 @@
 #include "input.h"
 #include "param.h"
 
+// #include "ThrustCurve.h"
+
+struct Controller_Output_t
+{
+
+	// Orientation of the body frame with respect to the world frame
+	Eigen::Quaterniond q;
+
+	// Body rates in body frame
+	Eigen::Vector3d bodyrates; // [rad/s]
+
+	// Collective mass normalized thrust
+	double thrust;
+
+	//Eigen::Vector3d des_v_real;
+};
+
+struct AutoTakeoffLand_t
+{
+	bool landed{true};
+	ros::Time toggle_takeoff_land_time;
+	std::pair<bool, ros::Time> delay_trigger{std::pair<bool, ros::Time>(false, ros::Time(0))};
+	Eigen::Vector4d start_pose;
+	
+	static constexpr double MOTORS_SPEEDUP_TIME = 3.0; // motors idle running for 3 seconds before takeoff
+	static constexpr double DELAY_TRIGGER_TIME = 2.0;  // Time to be delayed when reach at target height
+};
+struct RcDy_Data_t
+{
+    bool is_hover_mode;
+    bool is_command_mode;
+    bool enter_hover_mode;
+    bool enter_command_mode;
+    bool toggle_reboot;
+    void reset() {is_hover_mode = true;
+                    enter_hover_mode = false;
+                    is_command_mode = true;
+                    enter_command_mode = false;
+                    toggle_reboot = false;}
+};
+struct Desired_State_t
+{
+	Eigen::Vector3d p;
+	Eigen::Vector3d v;
+	Eigen::Vector3d a;
+	Eigen::Vector3d j;
+	Eigen::Quaterniond q;
+	double yaw;
+	double yaw_rate;
+
+	Desired_State_t(){};
+
+	Desired_State_t(Odom_Data_t &odom)
+		: p(odom.p),
+		  v(Eigen::Vector3d::Zero()),
+		  a(Eigen::Vector3d::Zero()),
+		  j(Eigen::Vector3d::Zero()),
+		  q(odom.q),
+		  yaw(uav_utils::get_yaw_from_quaternion(odom.q)),
+		  yaw_rate(0){};
+};
 
 
-class PlannerClass {
+class PlannerClass
+{
 public:
-    // PlannerClass() {}
-    PlannerClass(ros::NodeHandle &nh) {
+	Parameter_t &param;
 
-        // load param
-        nh.param("/ipc_node/ctrl_delay", ctrl_delay_, 0.1);
-        nh.param("/ipc_node/sfc_dis", sfc_dis_, 0.1);
-        nh.param("/ipc_node/thrust_limit", thrust_limit_, 0.5);
-        nh.param("/ipc_node/hover_esti", hover_esti_flag_, true);
-        nh.param("/ipc_node/hover_perc", hover_perc_, 0.23);
-        nh.param("/ipc_node/yaw_ctrl_flag", yaw_ctrl_flag_, false);
-        nh.param("/ipc_node/yaw_gain", yaw_gain_, 0.1);
-        nh.param("/ipc_node/goal_x", goal_p_.x(), 0.0);
-        nh.param("/ipc_node/goal_y", goal_p_.y(), 0.0);
-        nh.param("/ipc_node/goal_z", goal_p_.z(), 1.0);
-        Eigen::Vector3d map_size, map_low, map_upp;
-        nh.param("/ipc_node/astar/resolution", resolution_, 0.1);
-        nh.param("/ipc_node/astar/map_x_size", map_size.x(), 10.0);
-        nh.param("/ipc_node/astar/map_y_size", map_size.y(), 10.0);
-        nh.param("/ipc_node/astar/map_z_size", map_size.z(), 5.0);
-        nh.param("/ipc_node/astar/expand_dyn", expand_dyn_, 0.25);
-        nh.param("/ipc_node/astar/expand_fix", expand_fix_, 0.25);
-        map_low << -map_size.x()/2.0, -map_size.y()/2.0, 0;
-        map_upp <<  map_size.x()/2.0,  map_size.y()/2.0, map_size.z();
-        map_upp_ = map_upp;
-        nh.param("/ipc_node/fsm/ref_dis", ref_dis_, 1);
-        nh.param("/ipc_node/fsm/path_dis", path_dis_, 0.1);
+	RC_Data_t rc_data;
+	Dynamic_Data_t dy_data;
+	State_Data_t state_data;
+	ExtendedState_Data_t extended_state_data;
+	Odom_Data_t odom_data;
+	Imu_Data_t imu_data;
+	Command_Data_t cmd_data;
+	Battery_Data_t bat_data;
+	Takeoff_Land_Data_t takeoff_land_data;
+    Goal_Data_t goal_data;
+	PointCloud_Data_t point_cloud_data;
 
-        // instantiation
-        Gravity_ << 0, 0, 9.81;
-        thrust_ = hover_perc_;//debug
-        thr2acc_ = 9.81 / thrust_;
+	ros::Publisher traj_start_trigger_pub;
+	ros::Publisher ctrl_FCU_pub;
+	ros::Publisher debug_pub; //debug
+    ros::Publisher trajectory_pub;
+    ros::Publisher vision_pub;
+	//planner visualization
+	ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, sfc_pub_, mpc_path_pub_, goal_pub_;
 
-        mpc_   = std::make_shared<MPCPlannerClass>(nh);
-        local_astar_ = std::make_shared<LoaclAstarClass>();
-        local_astar_->InitMap(resolution_, map_low, map_upp);
-        // local_astar_->InitMap(resolution_, Eigen::Vector3d(-5, -5, 0), Eigen::Vector3d(5, 5, 3));
 
-        // ros topic
-        astar_pub_ = nh.advertise<visualization_msgs::Marker>("astar_path", 1);
-        gird_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("grid_map", 1);
-        mpc_path_pub_ = nh.advertise<nav_msgs::Path>("mpc_path", 1);
-        sfc_pub_ = nh.advertise<visualization_msgs::MarkerArray>("sfc", 1);
-        goal_pub_ = nh.advertise<geometry_msgs::PoseStamped>("goal_pub", 1);
+    ros::ServiceClient set_FCU_mode_srv;
+	ros::ServiceClient arming_client_srv;
+	ros::ServiceClient reboot_FCU_srv;
 
-        std::string file = ros::package::getPath("ipc") + "/config";
-        write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
-        log_times_.resize(5, 1);
-        write_time_ << "mapping" << ", " << "replan" << ", " << "sfc" << ", " << "mpc" << ", " << "df" << ", " << std::endl;
-    }
-    ~PlannerClass() {}
-    void MpcCalculate(const Odom_Data_t& odom, const Eigen::Vector3d& imu_a);
-    void PointCloudCorpAndSetMap(const Odom_Data_t& odom,PointCloud_Data_t& pc2);
-    void PathReplan(bool extend, const Odom_Data_t& odom);
-    void SetSFCAndGoal(const Odom_Data_t& odom);
-    void resetThrustMapping(void)
-    {
-        thr2acc_ = 9.81 / hover_perc_;
-        P_ = 100;
-    }
+	Eigen::Vector4d hover_pose;
+	ros::Time last_set_hover_pose_time;
+
+	enum State_t
+	{
+        WAIT_STATUS = 0,
+		MANUAL_CTRL = 1, // px4ctrl is deactived. FCU is controled by the remote controller only
+		AUTO_HOVER, // px4ctrl is actived, it will keep the drone hover from odom measurments while waiting for commands from PositionCommand topic.
+		CMD_CTRL,	// px4ctrl is actived, and controling the drone.
+		AUTO_TAKEOFF,
+		AUTO_LAND
+	};
+
+	PlannerClass(ros::NodeHandle &nh,Parameter_t &);
+	void process();
+	bool rc_is_received(const ros::Time &now_time);
+	bool cmd_is_received(const ros::Time &now_time);
+	bool odom_is_received(const ros::Time &now_time);
+	bool imu_is_received(const ros::Time &now_time);
+	bool bat_is_received(const ros::Time &now_time);
+	bool recv_new_odom();
+	State_t get_state() { return state; }
+	bool get_landed() { return takeoff_land.landed; }
+    bool judge_in_fence();
+    bool judge_close_to_fence();
+
+		//
+	void LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg);
 private:
-    void AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale) {
-        visualization_msgs::Marker node_vis; 
-        node_vis.header.frame_id = "world";
-        node_vis.header.stamp = ros::Time::now();
+	State_t state; // Should only be changed in PlannerClass::process() function!
+	AutoTakeoffLand_t takeoff_land;
+	RcDy_Data_t rc_dy_data;
 
-        if (type == 0) {
-            node_vis.ns = "astar_path";
-            node_vis.color.a = 1.0;
-            node_vis.color.r = 0.0;
-            node_vis.color.g = 0.0;
-            node_vis.color.b = 0.0;
-        } else if (type == 1) {
-            node_vis.ns = "floyd_path";
-            node_vis.color.a = 1.0;
-            node_vis.color.r = 1.0;
-            node_vis.color.g = 0.0;
-            node_vis.color.b = 0.0;
-        } else if (type == 2) {
-            node_vis.ns = "short_path";
-            node_vis.color.a = 1.0;
-            node_vis.color.r = 0.0;
-            node_vis.color.g = 0.0;
-            node_vis.color.b = 1.0;
-        } else if (type == 3) {
-            node_vis.ns = "set_points";
-            node_vis.color.a = 1.0;
-            node_vis.color.r = 0.0;
-            node_vis.color.g = 1.0;
-            node_vis.color.b = 0.0;
-        }
-
-        node_vis.type = visualization_msgs::Marker::CUBE_LIST;
-        node_vis.action = visualization_msgs::Marker::ADD;
-        node_vis.id = 0;
-        node_vis.pose.orientation.x = 0.0;
-        node_vis.pose.orientation.y = 0.0;
-        node_vis.pose.orientation.z = 0.0;
-        node_vis.pose.orientation.w = 1.0;
-        
-        node_vis.scale.x = scale;
-        node_vis.scale.y = scale;
-        node_vis.scale.z = scale;
-
-        geometry_msgs::Point pt;
-        for (int i = 0; i < int(nodes.size()); i++) {
-            Eigen::Vector3d coord = nodes[i];
-            pt.x = coord(0);
-            pt.y = coord(1);
-            pt.z = coord(2);
-            node_vis.points.push_back(pt);
-        }
-        astar_pub_.publish(node_vis);
-    }
-    void CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r) {
-        quadrotor_msgs::PositionCommand msg;
-        msg.header.frame_id = "world";
-        msg.header.stamp    = ros::Time::now();
-        msg.position.x      = p_r.x();
-        msg.position.y      = p_r.y();
-        msg.position.z      = p_r.z();
-        msg.velocity.x      = v_r.x();
-        msg.velocity.y      = v_r.y();
-        msg.velocity.z      = v_r.z();
-        msg.acceleration.x  = a_r.x();
-        msg.acceleration.y  = a_r.y();
-        msg.acceleration.z  = a_r.z();
-        msg.jerk.x          = j_r.x();
-        msg.jerk.y          = j_r.y();
-        msg.jerk.z          = j_r.z();
-        if (yaw_ctrl_flag_) {
-            double yaw_error = yaw_r_ - yaw_;
-            if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
-            if (yaw_error < -M_PI) yaw_error += M_PI * 2;
-            msg.yaw     = yaw_ + yaw_error * 0.1;
-            msg.yaw_dot = 0;
-        } else {
-            msg.yaw     = 0;
-            msg.yaw_dot = 0;
-        }
-        cmd_pub_.publish(msg);
-    }
-    void MPCPathPublish(std::vector<Eigen::Vector3d> &pt) {
-        nav_msgs::Path msg;
-        msg.header.frame_id = "world";
-        msg.header.stamp = ros::Time::now();
-        for (int i = 0; i < pt.size(); i++) {
-            geometry_msgs::PoseStamped pose;
-            pose.pose.position.x = pt[i].x();
-            pose.pose.position.y = pt[i].y();
-            pose.pose.position.z = pt[i].z();
-            msg.poses.push_back(pose);
-            // std::cout << "mpc path " << i << ": " << pt[i].transpose() << std::endl;
-        }
-        mpc_path_pub_.publish(msg);
-    }
-    void WriteLogTime(void) {
-        for (int i = 0; i < log_times_.size(); i++) {
-            write_time_ << log_times_[i] << ", ";
-            log_times_[i] = 0.0;
-        }
-        write_time_ << std::endl;
-    }
-
-    void ComputeThrust(Eigen::Vector3d acc, Eigen::Quaterniond q) {
-        const Eigen::Vector3d zB = q * Eigen::Vector3d::UnitZ();
-        double des_acc_norm = acc.dot(zB);
-        thrust_ = des_acc_norm / thr2acc_;
-    }
-    void ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk) {
-        Eigen::Vector3d xB, yB, zB, xC;
-        if (yaw_ctrl_flag_) {
-            double yaw_error = yaw_r_ - yaw_;
-            if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
-            if (yaw_error < -M_PI) yaw_error += M_PI * 2;
-            yaw_dot_r_ = yaw_error * yaw_gain_;
-        } else {
-            yaw_dot_r_ = (0 - yaw_) * yaw_gain_;
-        }
-        xC << std::cos(yaw_), std::sin(yaw_), 0;
-
-        zB = acc.normalized();
-        yB = (zB.cross(xC)).normalized();
-        xB = yB.cross(zB);
-        Eigen::Matrix3d R;
-        R << xB, yB, zB;
-        u_q_ = R;
-
-        Eigen::Vector3d hw = (jerk - (zB.dot(jerk) * zB)) / acc.norm();
-        rate_.x() = -hw.dot(yB);
-        rate_.y() = hw.dot(xB);
-        rate_.z() = yaw_dot_r_ * zB.dot(Eigen::Vector3d(0, 0, 1));
-    }
-    bool estimateThrustModel(const Eigen::Vector3d &est_a)
-    {
-        // if (hover_esti_flag_ == false) {
-        //     thr2acc_ = 9.81 / hover_perc_;
-        //     return true;
-        // }
-        // if (mode_ != Command) {//debug
-        //     P_ = 100.0;
-        //     thr2acc_ = 9.81 / hover_perc_;
-        //     return true;
-        // }
-        ros::Time t_now = ros::Time::now();
-        if (timed_thrust_.size() == 0) return false;
-        std::pair<ros::Time, double> t_t = timed_thrust_.front();
-
-        while (timed_thrust_.size() >= 1) {
-            double delta_t = (t_now - t_t.first).toSec();
-            if (delta_t > 1.0) {
-                timed_thrust_.pop();
-                continue;
-            } 
-            if (delta_t < 0.035) {
-                return false;
-            }
-
-            /* Recursive least squares algorithm with vanishing memory */
-            double thr = t_t.second;
-            timed_thrust_.pop();
-            /* Model: est_a(2) = thr2acc * thr */
-            double R = 0.3; // using Kalman filter
-            double K = P_ / (P_ + R);
-            thr2acc_ = thr2acc_ + K * (est_a(2) - thr * thr2acc_);
-            P_ = (1 - K * thr) * P_;
-            double hover_percentage = 9.81 / thr2acc_;
-            if (hover_percentage > 0.8 || hover_percentage < 0.1) {
-                // ROS_INFO_THROTTLE(1, "Estimated hover_percentage >0.8 or <0.1! Perhaps the accel vibration is too high!");
-                thr2acc_ = hover_percentage > 0.8 ? 9.81 / 0.8 : thr2acc_;
-                thr2acc_ = hover_percentage < 0.1 ? 9.81 / 0.1 : thr2acc_;
-            }
-            // ROS_WARN("[PX4CTRL] hover_percentage = %f", hover_percentage);
-            return true;
-        }
-        return false;
-    }
-
-    void OdomCallback(const nav_msgs::OdometryConstPtr& msg);
-    void GoalCallback(const geometry_msgs::PoseStampedConstPtr& msg);
-    void IMUCallback(const sensor_msgs::ImuConstPtr& msg);
-    void LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg);
-    void RCInCallback(const mavros_msgs::RCInConstPtr& msg);
-
-    void TimerCallback(const ros::TimerEvent &);
-
-    // void PathReplan(bool extend);
-
-    void GeneratePolyOnPath();
-    void GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
-
-    ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, sfc_pub_, mpc_path_pub_, goal_pub_;
-    ros::Time       odom_time_, last_mpc_time_;
-
-    bool simu_flag_, perfect_simu_flag_, pc_ctrl_flag_, hover_esti_flag_, yaw_ctrl_flag_;
-    bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
-    double resolution_;
-    double ctrl_delay_;
+	// std::shared_ptr<PlannerClass> planner_;
+	bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
+	bool simu_flag_, perfect_simu_flag_, hover_esti_flag_, yaw_ctrl_flag_;
+	double resolution_;
+	double ctrl_delay_;
     double thrust_limit_, hover_perc_;
-    double sfc_dis_, path_dis_, expand_dyn_, expand_fix_;
-    int ref_dis_;
-    int mpc_ctrl_index_;
+	double sfc_dis_, path_dis_, expand_dyn_, expand_fix_;
+	int ref_dis_;
+	int mpc_ctrl_index_;
     std::vector<Eigen::Vector3d> remain_nodes_;
 
-    std::ofstream write_time_;
+	std::ofstream write_time_;
     std::vector<double> log_times_;
+	ros::Time last_mpc_time_;
+	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_;
 
-    Eigen::Vector3d goal_p_, map_upp_;
-    // Eigen::Vector3d odom_p_, odom_v_, odom_a_, imu_a_;
-    Eigen::Quaterniond  u_q_;
-    Eigen::Vector3d rate_;
-    double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
+	Eigen::Vector3d goal_p_, map_upp_;
+	Eigen::Vector3d rate_;
+	double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
 
-    int astar_index_{0};
+	int astar_index_{0};
     std::vector<Eigen::Vector3d> astar_path_;
     std::vector<Eigen::Vector3d> waypoints_;
     std::vector<Eigen::Vector3d> follow_path_;
@@ -318,18 +186,62 @@ private:
     std::vector<Eigen::Vector3d> local_pc_buffer_[10];
     std::vector<Eigen::Vector3d> mpc_goals_;
 
-    double thr2acc_;
+	double thr2acc_;
     double thrust_;
     double P_{100.0};
     Eigen::Vector3d Gravity_;
     std::queue<std::pair<ros::Time, double>> timed_thrust_;
 
-    // std::deque<pcl::PointCloud<pcl::PointXYZ>> vec_cloud_;
-    // pcl::PointCloud<pcl::PointXYZ> static_map_;
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
+    std::deque<pcl::PointCloud<pcl::PointXYZ>> vec_cloud_;
+    pcl::PointCloud<pcl::PointXYZ> static_map_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
 
     std::shared_ptr<LoaclAstarClass> local_astar_;
     std::shared_ptr<MPCPlannerClass> mpc_;
+
+	// ---- control related ----
+	Desired_State_t get_hover_des();
+	Desired_State_t get_cmd_des();
+
+	// ---- auto takeoff/land ----
+	void motors_idling(const Imu_Data_t &imu, Controller_Output_t &u);
+	void land_detector(const State_t state, const Desired_State_t &des, const Odom_Data_t &odom); // Detect landing 
+	void set_start_pose_for_takeoff_land(const Odom_Data_t &odom);
+	Desired_State_t get_rotor_speed_up_des(const ros::Time now);
+	Desired_State_t get_takeoff_land_des(const double speed);
+
+	// ---- tools ----
+	void WriteLogTime(void);
+	void ComputeThrust(Eigen::Vector3d acc);
+	void ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk);
+	bool estimateThrustModel(const Eigen::Vector3d &est_a);
+	void resetThrustMapping(void)
+    {
+        thr2acc_ = 9.81 / hover_perc_;
+        P_ = 100;
+    }
+	void PathReplan(bool extend);
+    void GeneratePolyOnPath();
+    void GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
+	void set_hov_with_odom();
+	void set_hov_with_rc();
+	void MpcCalculate(Controller_Output_t& u);
+	bool estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen::Quaterniond &q);
+	void SetSFCAndGoal();
+	bool toggle_offboard_mode(bool on_off); // It will only try to toggle once, so not blocked.
+	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
+	void reboot_FCU();
+	void CmdMode();
+	void PointCloudCorpAndSetMap(const Odom_Data_t& odom, PointCloud_Data_t& pc2);
+	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
+	void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
+	void publish_trigger(const nav_msgs::Odometry &odom_msg);
+
+
+	void AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale);
+	void CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r);
+	void MPCPathPublish(std::vector<Eigen::Vector3d> &pt);
+	void StateUpdate(void);
 };
 
 #endif

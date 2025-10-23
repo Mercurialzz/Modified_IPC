@@ -1,5 +1,10 @@
 #include "planner.h"
+#include <uav_utils/converters.h>
 #include "../include/polytope/emvp.hpp"
+#include <Eigen/Core>
+
+using namespace std;
+using namespace uav_utils;
 
 #define BACKWARD_HAS_DW 1
 #include "backward.hpp"
@@ -7,52 +12,1208 @@ namespace backward{
     backward::SignalHandling sh;
 }
 
-// void PlannerClass::TimerCallback(const ros::TimerEvent &)
-// {
-//     // === 基础状态检查 ===
-//     if (!has_odom_flag_) return;  // 没有里程计数据则直接返回
-//     if (mode_ == Manual) {        // 手动模式：发送零控制指令
-//         BodyrateCtrlPub(Eigen::Vector3d(0,0,0), 0.05, ros::Time::now());
-//         return;
-//     }
+PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(param_)/*, thrust_curve(thrust_curve_)*/
+{
+    //param update
+    simu_flag_ = param.simu_flag;
+    perfect_simu_flag_ = param.perfect_simu_flag;
+    ctrl_delay_ = param.ctrl_delay;
+    sfc_dis_ = param.sfc_dis;
+    thrust_limit_ = param.thrust_limit;
+    hover_esti_flag_ = param.hover_esti_flag;
+    hover_perc_ = param.hover_perc;
+    yaw_gain_ = param.yaw_gain;
+    yaw_ctrl_flag_ = param.yaw_ctrl_flag;
+    goal_p_ = Eigen::Vector3d(param.goal_x, param.goal_y, param.goal_z);
 
-//     timer_mutex_.lock();  // 加锁防止定时器回调冲突
+    resolution_ = param.resolution;
+    expand_dyn_ = param.expand_dyn;
+    expand_fix_ = param.expand_fix;
+    Eigen::Vector3d map_low, map_upp;
+
+    map_low << -param.map_size.x()/2.0, -param.map_size.y()/2.0, 0.0;
+    map_upp << param.map_size.x()/2.0, param.map_size.y()/2.0, param.map_size.z()/2.0;
+    map_upp_ = map_upp;
+
+    path_dis_ = param.path_dis;
+    ref_dis_ = param.ref_dis;
+
+    Gravity_ << 0, 0, 9.81;
+    if (simu_flag_) {
+        thrust_ = 0.7;
+    } else {
+        thrust_ = hover_perc_;
+    }    
+    thr2acc_ = 9.81 / thrust_;
+
+    mpc_   = std::make_shared<MPCPlannerClass>(nh);
+    local_astar_ = std::make_shared<LoaclAstarClass>();
+    local_astar_->InitMap(resolution_, map_low, map_upp);
+
+    std::string file = ros::package::getPath("ipc") + "/config";
+    write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
+    log_times_.resize(5, 1);
+    write_time_ << "mapping" << ", " << "replan" << ", " << "sfc" << ", " << "mpc" << ", " << "df" << ", " << std::endl;
+
+    state = MANUAL_CTRL;
+    hover_pose.setZero();
+    rc_dy_data.reset();
+}
+
+void PlannerClass::StateUpdate(void)
+{
+    //odom update
+    if(odom_data.recv_new_msg)
+    {
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
+        odom_data.recv_new_msg = false;
+    }
+    //goal update
+    if(goal_data.recv_new_msg)
+    {
+        static Eigen::Vector3d last_goal;
+        if (last_goal != goal_data.new_goal)
+        {
+            std::lock_guard<std::mutex> lock(goal_mutex_);
+            goal_p_ = goal_data.new_goal;
+            if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
+            if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
+            new_goal_flag_ = true;
+            ROS_INFO("[px4ctrl] New goal received: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+        }
+        last_goal = goal_data.new_goal;
+        goal_data.recv_new_msg = false;
+    }
+}
+/*
+        Finite State Machine
+
+	      system start
+	            |
+	            |
+	            v
+	----- > MANUAL_CTRL <-----------------
+	|         ^   |    \                 |
+	|         |   |     \                |
+	|         |   |      > AUTO_TAKEOFF  |
+	|         |   |        /             |
+	|         |   |       /              |
+	|         |   |      /               |
+	|         |   v     /                |
+	|       AUTO_HOVER <                 |
+	|         ^   |  \  \                |
+	|         |   |   \  \               |
+	|         |	  |    > AUTO_LAND -------
+	|         |   |
+	|         |   v
+	-------- CMD_CTRL
+
+*/
+
+void PlannerClass::process()
+{
+    ros::Time now_time = ros::Time::now();
+    Controller_Output_t u;
+    Desired_State_t des(odom_data);
+    bool rotor_low_speed_during_land = false;
+
+    if(param.takeoff_land.no_RC) {
+        rc_dy_data.enter_command_mode = dy_data.enter_command_mode;
+        rc_dy_data.enter_hover_mode = dy_data.enter_hover_mode;
+        rc_dy_data.is_command_mode = dy_data.is_command_mode;
+        rc_dy_data.is_hover_mode = dy_data.is_hover_mode;
+        rc_dy_data.toggle_reboot = dy_data.toggle_reboot;
+    } else {
+        rc_dy_data.enter_command_mode = rc_data.enter_command_mode;
+        rc_dy_data.enter_hover_mode = rc_data.enter_hover_mode;
+        rc_dy_data.is_command_mode = rc_data.is_command_mode;
+        rc_dy_data.is_hover_mode = rc_data.is_hover_mode;
+        rc_dy_data.toggle_reboot = rc_data.toggle_reboot;
+    }
+    StateUpdate();
+
+    // STEP1: state machine runs
+    switch (state)
+    {
+        case MANUAL_CTRL:
+        {
+            if (rc_dy_data.enter_hover_mode) // Try to jump to AUTO_HOVER
+            {
+                if (!odom_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). No odom!");
+                    break;
+                }
+                if (cmd_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). You are sending commands before toggling into AUTO_HOVER, which is not allowed. Stop sending commands now!");
+                    break;
+                }
+                if (odom_data.v.norm() > 3.0)
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). Odom_Vel=%fm/s, which seems that the locolization module goes wrong!", odom_data.v.norm());
+                    break;
+                }
+
+                state = AUTO_HOVER;
+                resetThrustMapping();
+                set_hov_with_odom();
+                toggle_offboard_mode(true);
+
+                ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER(L2)\033[32m");
+            }
+            else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::TAKEOFF) // Try to jump to AUTO_TAKEOFF
+            {
+                if (!odom_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. No odom!");
+                    break;
+                }
+                if (cmd_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. You are sending commands before toggling into AUTO_TAKEOFF, which is not allowed. Stop sending commands now!");
+                    break;
+                }
+                if (odom_data.v.norm() > 0.1)
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. Odom_Vel=%fm/s, non-static takeoff is not allowed!", odom_data.v.norm());
+                    break;
+                }
+                if (!get_landed())
+                {
+                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. land detector says that the drone is not landed now!");
+                    break;
+                }
+                if (rc_is_received(now_time)) // Check this only if RC is connected.
+                {
+                    if (!rc_data.is_hover_mode || !rc_data.is_command_mode || !rc_data.check_centered())
+                    {
+                        ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. If you have your RC connected, keep its switches at \"auto hover\" and \"command control\" states, and all sticks at the center, then takeoff again.");
+                        while (ros::ok())
+                        {
+                            ros::Duration(0.01).sleep();
+                            ros::spinOnce();
+                            if (rc_data.is_hover_mode && rc_data.is_command_mode && rc_data.check_centered())
+                            {
+                                ROS_INFO("\033[32m[px4ctrl] OK, you can takeoff again.\033[32m");
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                state = AUTO_TAKEOFF;
+                resetThrustMapping();
+                set_start_pose_for_takeoff_land(odom_data);
+                toggle_offboard_mode(true);				  // toggle on offboard before arm
+                for (int i = 0; i < 10 && ros::ok(); ++i) // wait for 0.1 seconds to allow mode change by FMU // mark
+                {
+                    ros::Duration(0.01).sleep();
+                    ros::spinOnce();
+                }
+                if (param.takeoff_land.enable_auto_arm)
+                {
+                    toggle_arm_disarm(true);
+                }
+                takeoff_land.toggle_takeoff_land_time = now_time;
+
+                ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_TAKEOFF\033[32m");
+            }
+            else if(!param.takeoff_land.enable && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::TAKEOFF)//use qgc takeoff
+            {
+                if (!odom_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject To Offboard. No odom!");
+                    break;
+                }
+                if (cmd_is_received(now_time))
+                {
+                    ROS_ERROR("[px4ctrl] Reject To Offboard. You are sending commands before toggling into Offboard, which is not allowed. Stop sending commands now!");
+                    break;
+                }
+                if (odom_data.v.norm() > 0.5)
+                {
+                    ROS_ERROR("[px4ctrl] Reject To Offboard. Odom_Vel=%fm/s, non-static to Offboard is not allowed!", odom_data.v.norm());
+                    break;
+                }
+                if (rc_is_received(now_time)) // Check this only if RC is connected.
+                {
+                    if (!rc_data.is_hover_mode || !rc_data.is_command_mode || !rc_data.check_centered())
+                    {
+                        ROS_ERROR("[px4ctrl] Reject To Offboard. If you have your RC connected, keep its switches at \"auto hover\" and \"command control\" states, and all sticks at the center, then takeoff again.");
+                        while (ros::ok())
+                        {
+                            ros::Duration(0.01).sleep();
+                            ros::spinOnce();
+                            if (rc_data.is_hover_mode && rc_data.is_command_mode && rc_data.check_centered())
+                            {
+                                ROS_INFO("\033[32m[px4ctrl] OK, you can to Offboard again.\033[32m");
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+                state = AUTO_HOVER;
+                set_hov_with_odom();
+                resetThrustMapping();
+                // set_start_pose_for_takeoff_land(odom_data);
+                toggle_offboard_mode(true);				  // toggle on offboard before arm
+                for (int i = 0; i < 10 && ros::ok(); ++i) // wait for 0.1 seconds to allow mode change by FMU // mark
+                {
+                    ros::Duration(0.01).sleep();
+                    ros::spinOnce();
+                }
+                // if (param.takeoff_land.enable_auto_arm)
+                // {
+                //     toggle_arm_disarm(true);
+                // }
+                // takeoff_land.toggle_takeoff_land_time = now_time;
+
+                ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER01\033[32m");
+            }
+
+            if (rc_dy_data.toggle_reboot) // Try to reboot. EKF2 based PX4 FCU requires reboot when its state estimator goes wrong.
+            {
+                if (state_data.current_state.armed)
+                {
+                    ROS_ERROR("[px4ctrl] Reject reboot! Disarm the drone first!");
+                    break;
+                }
+                reboot_FCU();
+            }
+
+            break;
+        }
+
+        case AUTO_HOVER:
+        {
+            if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
+            {
+                state = MANUAL_CTRL;
+                toggle_offboard_mode(false);
+
+                ROS_WARN("[px4ctrl] AUTO_HOVER(L2) --> MANUAL_CTRL(L1)");
+            }
+            else if (rc_dy_data.is_command_mode && cmd_is_received(now_time))
+            {
+                if (state_data.current_state.mode == "OFFBOARD")
+                {
+                    state = CMD_CTRL;
+                    des = get_cmd_des();
+                    ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
+                }
+            }
+            else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
+            {
+
+                state = AUTO_LAND;
+                set_start_pose_for_takeoff_land(odom_data);
+
+                ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND\033[32m");
+            }
+            else
+            {
+                set_hov_with_rc();
+                des = get_hover_des();
+                if ((rc_dy_data.enter_command_mode) ||
+                    (takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
+                {
+                    takeoff_land.delay_trigger.first = false;
+                    publish_trigger(odom_data.msg);
+                    ROS_INFO("\033[32m[px4ctrl] TRIGGER sent, allow user command.\033[32m");
+                }
+
+                // cout << "des.p=" << des.p.transpose() << endl;
+            }
+
+            break;
+        }
+
+        case CMD_CTRL:
+        {
+            if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
+            {
+                state = MANUAL_CTRL;
+                toggle_offboard_mode(false);
+
+                ROS_WARN("[px4ctrl] From CMD_CTRL(L3) to MANUAL_CTRL(L1)!");
+            }
+            else if (!rc_dy_data.is_command_mode || !cmd_is_received(now_time))
+            {
+                state = AUTO_HOVER;
+                set_hov_with_odom();
+                des = get_hover_des();
+                ROS_INFO("[px4ctrl] From CMD_CTRL(L3) to AUTO_HOVER(L2)!");
+            }
+            else
+            {
+                des = get_cmd_des();
+            }
+
+            if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
+            {
+                ROS_ERROR("[px4ctrl] Reject AUTO_LAND, which must be triggered in AUTO_HOVER. \
+					Stop sending control commands for longer than %fs to let px4ctrl return to AUTO_HOVER first.",
+                          param.msg_timeout.cmd);
+            }
+
+            break;
+        }
+
+        case AUTO_TAKEOFF:
+        {
+            if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
+            {
+                state = MANUAL_CTRL;
+                toggle_offboard_mode(false);
+
+                ROS_WARN("[px4ctrl] AUTO_TAKEOFF(L2) --> MANUAL_CTRL(L1)");
+            }
+            else if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
+            {
+                des = get_rotor_speed_up_des(now_time);
+                //针对mpc，z轴方向的值要设小一点
+                des.p.z() = takeoff_land.start_pose.head<3>().z()-0.1;
+            }
+            else if (odom_data.p(2) >= (takeoff_land.start_pose(2) + param.takeoff_land.height)) // reach the desired height
+            {
+                state = AUTO_HOVER;
+                set_hov_with_odom();
+                ROS_INFO("\033[32m[px4ctrl] AUTO_TAKEOFF --> AUTO_HOVER(L2)\033[32m");
+
+                takeoff_land.delay_trigger.first = true;
+                takeoff_land.delay_trigger.second = now_time + ros::Duration(AutoTakeoffLand_t::DELAY_TRIGGER_TIME);
+            }
+            else
+            {
+                des = get_takeoff_land_des(param.takeoff_land.speed);
+            }
+
+            break;
+        }
+
+        case AUTO_LAND:
+        {
+            if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
+            {
+                state = MANUAL_CTRL;
+                toggle_offboard_mode(false);
+
+                ROS_WARN("[px4ctrl] From AUTO_LAND to MANUAL_CTRL(L1)!");
+            }
+            else if (!rc_dy_data.is_command_mode)
+            {
+                state = AUTO_HOVER;
+                set_hov_with_odom();
+                des = get_hover_des();
+                ROS_INFO("[px4ctrl] From AUTO_LAND to AUTO_HOVER(L2)!");
+            }
+            else if (!get_landed())
+            {
+                des = get_takeoff_land_des(-param.takeoff_land.speed);
+            }
+            else
+            {
+                rotor_low_speed_during_land = true;
+
+                static bool print_once_flag = true;
+                if (print_once_flag)
+                {
+                    ROS_INFO("\033[32m[px4ctrl] Wait for abount 10s to let the drone arm.\033[32m");
+                    print_once_flag = false;
+                }
+
+                if (extended_state_data.current_extended_state.landed_state == mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND) // PX4 allows disarm after this
+                {
+                    static double last_trial_time = 0; // Avoid too frequent calls
+                    if (now_time.toSec() - last_trial_time > 1.0)
+                    {
+                        if (toggle_arm_disarm(false)) // disarm
+                        {
+                            print_once_flag = true;
+                            state = MANUAL_CTRL;
+                            toggle_offboard_mode(false); // toggle off offboard after disarm
+                            ROS_INFO("\033[32m[px4ctrl] AUTO_LAND --> MANUAL_CTRL(L1)\033[32m");
+                        }
+
+                        last_trial_time = now_time.toSec();
+                    }
+                }
+            }
+
+            break;
+        }
+
+        default:
+            break;
+    }
+
+    // STEP2: estimate thrust model
+    if (state == AUTO_HOVER || state == CMD_CTRL)
+    {
+        // controller.estimateThrustModel(imu_data.a, bat_data.volt, param);
+        //controller.estimateThrustModel(imu_data.a,param);
+
+    }
+
+    // STEP3: solve and update new control commands
+    if (rotor_low_speed_during_land) // used at the start of auto takeoff
+    {
+        motors_idling(imu_data, u);
+    }
+    else
+    {
+        // controller update
+        MpcCalculate(u);
+    }
+
+    // STEP4: publish control commands to mavros
+    publish_bodyrate_ctrl(u, now_time);
+
+    // STEP5: Detect if the drone has landed
+    land_detector(state, des, odom_data);
+    // cout << takeoff_land.landed << " ";
+    // fflush(stdout);
+
+    // STEP6: Clear flags beyound their lifetime
+    dy_data.enter_hover_mode = false;
+    dy_data.enter_command_mode = false;
+    dy_data.toggle_reboot = false;
+    rc_data.enter_hover_mode = false;
+    rc_data.enter_command_mode = false;
+    rc_data.toggle_reboot = false;
+    takeoff_land_data.triggered = false;
+}
+
+void PlannerClass::motors_idling(const Imu_Data_t &imu, Controller_Output_t &u)
+{
+    u.q = imu.q;
+    u.bodyrates = Eigen::Vector3d::Zero();
+    u.thrust = 0.04;
+}
+
+void PlannerClass::land_detector(const State_t state, const Desired_State_t &des, const Odom_Data_t &odom)
+{
+    static State_t last_state = State_t::MANUAL_CTRL;
+    if (last_state == State_t::MANUAL_CTRL && (state == State_t::AUTO_HOVER || state == State_t::AUTO_TAKEOFF))
+    {
+        takeoff_land.landed = false; // Always holds
+    }
+    last_state = state;
+
+    if (state == State_t::MANUAL_CTRL && !state_data.current_state.armed)
+    {
+        takeoff_land.landed = true;
+        return; // No need of other decisions
+    }
+
+    // land_detector parameters
+    constexpr double POSITION_DEVIATION_C = -0.5; // Constraint 1: target position below real position for POSITION_DEVIATION_C meters.
+    constexpr double VELOCITY_THR_C = 0.1;		  // Constraint 2: velocity below VELOCITY_MIN_C m/s.
+    constexpr double TIME_KEEP_C = 3.0;			  // Constraint 3: Time(s) the Constraint 1&2 need to keep.
+
+    static ros::Time time_C12_reached; // time_Constraints12_reached
+    static bool is_last_C12_satisfy;
+    if (takeoff_land.landed)
+    {
+        time_C12_reached = ros::Time::now();
+        is_last_C12_satisfy = false;
+    }
+    else
+    {
+        bool C12_satisfy = (des.p(2) - odom.p(2)) < POSITION_DEVIATION_C && odom.v.norm() < VELOCITY_THR_C;
+        if (C12_satisfy && !is_last_C12_satisfy)
+        {
+            time_C12_reached = ros::Time::now();
+        }
+        else if (C12_satisfy && is_last_C12_satisfy)
+        {
+            if ((ros::Time::now() - time_C12_reached).toSec() > TIME_KEEP_C) //Constraint 3 reached
+            {
+                takeoff_land.landed = true;
+            }
+        }
+
+        is_last_C12_satisfy = C12_satisfy;
+    }
+}
+
+Desired_State_t PlannerClass::get_hover_des()
+{
+    Desired_State_t des;
+    des.p = hover_pose.head<3>();
+    des.v = Eigen::Vector3d::Zero();
+    des.a = Eigen::Vector3d::Zero();
+    des.j = Eigen::Vector3d::Zero();
+    des.yaw = hover_pose(3);
+    des.yaw_rate = 0.0;
+
+    return des;
+}
+
+Desired_State_t PlannerClass::get_cmd_des()
+{
+    Desired_State_t des;
+    des.p = cmd_data.p;
+    des.v = cmd_data.v;
+    des.a = cmd_data.a;
+    des.j = cmd_data.j;
+    des.yaw = cmd_data.yaw;
+    des.yaw_rate = cmd_data.yaw_rate;
+
+    return des;
+}
+
+Desired_State_t PlannerClass::get_rotor_speed_up_des(const ros::Time now)
+{
+    double delta_t = (now - takeoff_land.toggle_takeoff_land_time).toSec();
+    double des_a_z = exp((delta_t - AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) * 6.0) * 7.0 - 7.0; // Parameters 6.0 and 7.0 are just heuristic values which result in a saticfactory curve.
+    if (des_a_z > 0.1)
+    {
+        ROS_ERROR("des_a_z > 0.1!, des_a_z=%f", des_a_z);
+        des_a_z = 0.0;
+    }
+
+    Desired_State_t des;
+
+    des.p = takeoff_land.start_pose.head<3>();
+    des.v = Eigen::Vector3d::Zero();
+    des.a = Eigen::Vector3d(0, 0, des_a_z);
+    des.j = Eigen::Vector3d::Zero();
+    des.yaw = takeoff_land.start_pose(3);
+    des.yaw_rate = 0.0;
+
+    return des;
+}
+
+Desired_State_t PlannerClass::get_takeoff_land_des(const double speed)
+{
+    ros::Time now = ros::Time::now();
+    double delta_t = (now - takeoff_land.toggle_takeoff_land_time).toSec() - (speed > 0 ? AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME : 0); // speed > 0 means takeoff
+    // takeoff_land.last_set_cmd_time = now;
+
+     //takeoff_land.start_pose(2) += speed * delta_t;
+
+    Desired_State_t des;
+    des.p = takeoff_land.start_pose.head<3>() + Eigen::Vector3d(0, 0, speed * delta_t);
+    des.v = Eigen::Vector3d(0, 0, speed);
+    des.a = Eigen::Vector3d::Zero();
+    des.j = Eigen::Vector3d::Zero();
+    des.yaw = takeoff_land.start_pose(3);
+    des.yaw_rate = 0.0;
+
+
+    return des;
+}
+
+void PlannerClass::set_hov_with_odom()
+{
+    hover_pose.head<3>() = odom_data.p;
+    hover_pose(3) = get_yaw_from_quaternion(odom_data.q);
+
+    last_set_hover_pose_time = ros::Time::now();
+}
+
+void PlannerClass::set_hov_with_rc()
+{
+    ros::Time now = ros::Time::now();
+    double delta_t = (now - last_set_hover_pose_time).toSec();
+    last_set_hover_pose_time = now;
+
+    hover_pose(0) += rc_data.ch[1] * param.max_manual_vel * delta_t * (param.rc_reverse.pitch ? 1 : -1);
+    hover_pose(1) += rc_data.ch[0] * param.max_manual_vel * delta_t * (param.rc_reverse.roll ? 1 : -1);
+    hover_pose(2) += rc_data.ch[2] * 1.0 * delta_t * (param.rc_reverse.throttle ? 1 : -1);
+    hover_pose(3) += rc_data.ch[3] * 1.0 * delta_t * (param.rc_reverse.yaw ? 1 : -1);
+
+    if (hover_pose(2) < -0.3)
+        hover_pose(2) = -0.3;
+
+    // if (param.print_dbg)
+    // {
+    // 	static unsigned int count = 0;
+    // 	if (count++ % 100 == 0)
+    // 	{
+    // 		cout << "hover_pose=" << hover_pose.transpose() << endl;
+    // 		cout << "ch[0~3]=" << rc_data.ch[0] << " " << rc_data.ch[1] << " " << rc_data.ch[2] << " " << rc_data.ch[3] << endl;
+    // 	}
+    // }
+}
+
+void PlannerClass::set_start_pose_for_takeoff_land(const Odom_Data_t &odom)
+{
+    takeoff_land.start_pose.head<3>() = odom_data.p;
+    takeoff_land.start_pose(3) = get_yaw_from_quaternion(odom_data.q);
+
+    takeoff_land.toggle_takeoff_land_time = ros::Time::now();
+}
+
+bool PlannerClass::rc_is_received(const ros::Time &now_time)
+{
+    return (now_time - rc_data.rcv_stamp).toSec() < param.msg_timeout.rc;
+}
+
+bool PlannerClass::cmd_is_received(const ros::Time &now_time)
+{
+    return (now_time - cmd_data.rcv_stamp).toSec() < param.msg_timeout.cmd;
+}
+
+bool PlannerClass::odom_is_received(const ros::Time &now_time)
+{
+    return (now_time - odom_data.rcv_stamp).toSec() < param.msg_timeout.odom;
+}
+
+bool PlannerClass::imu_is_received(const ros::Time &now_time)
+{
+    return (now_time - imu_data.rcv_stamp).toSec() < param.msg_timeout.imu;
+}
+
+bool PlannerClass::bat_is_received(const ros::Time &now_time)
+{
+    return (now_time - bat_data.rcv_stamp).toSec() < param.msg_timeout.bat;
+}
+
+bool PlannerClass::recv_new_odom()
+{
+    if (odom_data.recv_new_msg)
+    {
+        odom_data.recv_new_msg = false;
+        return true;
+    }
+
+    return false;
+}
+
+void PlannerClass::publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp)
+{
+    mavros_msgs::AttitudeTarget msg;
+
+    msg.header.stamp = stamp;
+    msg.header.frame_id = std::string("FCU");
+
+    msg.type_mask = mavros_msgs::AttitudeTarget::IGNORE_ATTITUDE;
+
+    msg.body_rate.x = u.bodyrates.x();
+    msg.body_rate.y = u.bodyrates.y();
+    msg.body_rate.z = u.bodyrates.z();
+
+    msg.thrust = u.thrust;
+
+    ctrl_FCU_pub.publish(msg);
+}
+
+void PlannerClass::publish_trigger(const nav_msgs::Odometry &odom_msg)
+{
+    geometry_msgs::PoseStamped msg;
+    msg.header.frame_id = "world";
+    msg.pose = odom_msg.pose.pose;
+
+    traj_start_trigger_pub.publish(msg);
+}
+
+bool PlannerClass::toggle_offboard_mode(bool on_off)
+{
+    mavros_msgs::SetMode offb_set_mode;
+
+    if (on_off)
+    {
+        state_data.state_before_offboard = state_data.current_state;
+        if (state_data.state_before_offboard.mode == "OFFBOARD") // Not allowed
+            state_data.state_before_offboard.mode = "MANUAL";
+
+        offb_set_mode.request.custom_mode = "OFFBOARD";
+        if (!(set_FCU_mode_srv.call(offb_set_mode) && offb_set_mode.response.mode_sent))
+        {
+            ROS_ERROR("Enter OFFBOARD rejected by PX4!");
+            return false;
+        }
+    }
+    else
+    {
+        offb_set_mode.request.custom_mode = state_data.state_before_offboard.mode;
+        if (!(set_FCU_mode_srv.call(offb_set_mode) && offb_set_mode.response.mode_sent))
+        {
+            ROS_ERROR("Exit OFFBOARD rejected by PX4!");
+            return false;
+        }
+    }
+
+    return true;
+
+    // if (param.print_dbg)
+    // 	printf("offb_set_mode mode_sent=%d(uint8_t)\n", offb_set_mode.response.mode_sent);
+}
+
+bool PlannerClass::toggle_arm_disarm(bool arm)
+{
+    mavros_msgs::CommandBool arm_cmd;
+    arm_cmd.request.value = arm;
+    if (!(arming_client_srv.call(arm_cmd) && arm_cmd.response.success))
+    {
+        if (arm)
+            ROS_ERROR("ARM rejected by PX4!");
+        else
+            ROS_ERROR("DISARM rejected by PX4!");
+
+        return false;
+    }
+
+    return true;
+}
+
+void PlannerClass::reboot_FCU()
+{
+    // https://mavlink.io/en/messages/common.html, MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN(#246)
+    mavros_msgs::CommandLong reboot_srv;
+    reboot_srv.request.broadcast = false;
+    reboot_srv.request.command = 246; // MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN
+    reboot_srv.request.param1 = 1;	  // Reboot autopilot
+    reboot_srv.request.param2 = 0;	  // Do nothing for onboard computer
+    reboot_srv.request.confirmation = true;
+
+    reboot_FCU_srv.call(reboot_srv);
+
+    ROS_INFO("Reboot FCU");
+
+    // if (param.print_dbg)
+    // 	printf("reboot result=%d(uint8_t), success=%d(uint8_t)\n", reboot_srv.response.result, reboot_srv.response.success);
+}
+
+void PlannerClass::AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale) {
+    visualization_msgs::Marker node_vis; 
+    node_vis.header.frame_id = "world";
+    node_vis.header.stamp = ros::Time::now();
+
+    if (type == 0) {
+        node_vis.ns = "astar_path";
+        node_vis.color.a = 1.0;
+        node_vis.color.r = 0.0;
+        node_vis.color.g = 0.0;
+        node_vis.color.b = 0.0;
+    } else if (type == 1) {
+        node_vis.ns = "floyd_path";
+        node_vis.color.a = 1.0;
+        node_vis.color.r = 1.0;
+        node_vis.color.g = 0.0;
+        node_vis.color.b = 0.0;
+    } else if (type == 2) {
+        node_vis.ns = "short_path";
+        node_vis.color.a = 1.0;
+        node_vis.color.r = 0.0;
+        node_vis.color.g = 0.0;
+        node_vis.color.b = 1.0;
+    } else if (type == 3) {
+        node_vis.ns = "set_points";
+        node_vis.color.a = 1.0;
+        node_vis.color.r = 0.0;
+        node_vis.color.g = 1.0;
+        node_vis.color.b = 0.0;
+    }
+
+    node_vis.type = visualization_msgs::Marker::CUBE_LIST;
+    node_vis.action = visualization_msgs::Marker::ADD;
+    node_vis.id = 0;
+    node_vis.pose.orientation.x = 0.0;
+    node_vis.pose.orientation.y = 0.0;
+    node_vis.pose.orientation.z = 0.0;
+    node_vis.pose.orientation.w = 1.0;
     
-//     ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
-//     ros::Time t_0 = odom_time_;            // 保存里程计时间戳
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-//     // === Command模式：自主导航控制 ===
-//     if (mode_ == Command) {
-//         // 路径规划触发逻辑
-//         if (new_goal_flag_) {
-//             // 新目标点：执行完整路径规划（扩展模式）
-//             new_goal_flag_ = false;
-//             replan_flag_ = false;
-//             PathReplan(true);
-//         }
-//         if (new_goal_flag_ == false && replan_flag_) {
-//             // 障碍物触发：执行局部重规划（非扩展模式）
-//             replan_flag_ = false;
-//             PathReplan(false);
-//         }
-//         log_times_[1] = (ros::Time::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
+    node_vis.scale.x = scale;
+    node_vis.scale.y = scale;
+    node_vis.scale.z = scale;
 
-//         SetSFCAndGoal();
-//     }
+    geometry_msgs::Point pt;
+    for (int i = 0; i < int(nodes.size()); i++) {
+        Eigen::Vector3d coord = nodes[i];
+        pt.x = coord(0);
+        pt.y = coord(1);
+        pt.z = coord(2);
+        node_vis.points.push_back(pt);
+    }
+    astar_pub_.publish(node_vis);
+}
+void PlannerClass::CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r) {
+    quadrotor_msgs::PositionCommand msg;
+    msg.header.frame_id = "world";
+    msg.header.stamp    = ros::Time::now();
+    msg.position.x      = p_r.x();
+    msg.position.y      = p_r.y();
+    msg.position.z      = p_r.z();
+    msg.velocity.x      = v_r.x();
+    msg.velocity.y      = v_r.y();
+    msg.velocity.z      = v_r.z();
+    msg.acceleration.x  = a_r.x();
+    msg.acceleration.y  = a_r.y();
+    msg.acceleration.z  = a_r.z();
+    msg.jerk.x          = j_r.x();
+    msg.jerk.y          = j_r.y();
+    msg.jerk.z          = j_r.z();
+    if (yaw_ctrl_flag_) {
+        double yaw_error = yaw_r_ - yaw_;
+        if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
+        if (yaw_error < -M_PI) yaw_error += M_PI * 2;
+        msg.yaw     = yaw_ + yaw_error * 0.1;
+        msg.yaw_dot = 0;
+    } else {
+        msg.yaw     = 0;
+        msg.yaw_dot = 0;
+    }
+    cmd_pub_.publish(msg);
+}
+void PlannerClass::MPCPathPublish(std::vector<Eigen::Vector3d> &pt) {
+    nav_msgs::Path msg;
+    msg.header.frame_id = "world";
+    msg.header.stamp = ros::Time::now();
+    for (int i = 0; i < pt.size(); i++) {
+        geometry_msgs::PoseStamped pose;
+        pose.pose.position.x = pt[i].x();
+        pose.pose.position.y = pt[i].y();
+        pose.pose.position.z = pt[i].z();
+        msg.poses.push_back(pose);
+        // std::cout << "mpc path " << i << ": " << pt[i].transpose() << std::endl;
+    }
+    mpc_path_pub_.publish(msg);
+}
+void PlannerClass::WriteLogTime(void) {
+    for (int i = 0; i < log_times_.size(); i++) {
+        write_time_ << log_times_[i] << ", ";
+        log_times_[i] = 0.0;
+    }
+    write_time_ << std::endl;
+}
 
-//     // === Hover模式：悬停控制 ===
-//     if (mode_ == Hover) {
-//         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
-//             mpc_->SetGoal(goal_p_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
-//         }
-//     }
+void PlannerClass::ComputeThrust(Eigen::Vector3d acc) {
+    const Eigen::Vector3d zB =  odom_data.q * Eigen::Vector3d::UnitZ();
+    double des_acc_norm = acc.dot(zB);
+    thrust_ = des_acc_norm / thr2acc_;
+}
+void PlannerClass::ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk) {
+    Eigen::Vector3d xB, yB, zB, xC;
+    if (yaw_ctrl_flag_) {
+        double yaw_error = yaw_r_ - yaw_;
+        if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
+        if (yaw_error < -M_PI) yaw_error += M_PI * 2;
+        yaw_dot_r_ = yaw_error * yaw_gain_;
+    } else {
+        yaw_dot_r_ = (0 - yaw_) * yaw_gain_;
+    }
+    xC << std::cos(yaw_), std::sin(yaw_), 0;
+
+    zB = acc.normalized();
+    yB = (zB.cross(xC)).normalized();
+    xB = yB.cross(zB);
+    Eigen::Matrix3d R;
+    R << xB, yB, zB;
+    // u_q_ = R;
+
+    Eigen::Vector3d hw = (jerk - (zB.dot(jerk) * zB)) / acc.norm();
+    rate_.x() = -hw.dot(yB);
+    rate_.y() = hw.dot(xB);
+    rate_.z() = yaw_dot_r_ * zB.dot(Eigen::Vector3d(0, 0, 1));
+}
+
+bool PlannerClass::estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen::Quaterniond &q)
+{
+    // if (hover_esti_flag_ == false) {
+    //     thr2acc_ = 9.81 / hover_perc_;
+    //     return true;
+    // }
+    // if (mode_ != Command) {//debug
+    //     P_ = 100.0;
+    //     thr2acc_ = 9.81 / hover_perc_;
+    //     return true;
+    // }
+    ros::Time t_now = ros::Time::now();
+
+    Eigen::Matrix3d Rotate = q.toRotationMatrix().inverse();
+    Eigen::Vector3d acc_body = Rotate * est_a;
+    if (timed_thrust_.size() == 0) return false;
+    std::pair<ros::Time, double> t_t = timed_thrust_.front();
+
+    while (timed_thrust_.size() >= 1) {
+        double delta_t = (t_now - t_t.first).toSec();
+        if (delta_t > 1.0) {
+            timed_thrust_.pop();
+            continue;
+        } 
+        if (delta_t < 0.035) {
+            return false;
+        }
+
+        /* Recursive least squares algorithm with vanishing memory */
+        double thr = t_t.second;
+        timed_thrust_.pop();
+        /* Model: acc_body(2) = thr2acc * thr */
+        double R = 0.3; // using Kalman filter
+        double K = P_ / (P_ + R);
+        thr2acc_ = thr2acc_ + K * (acc_body(2) - thr * thr2acc_);
+        P_ = (1 - K * thr) * P_;
+        double hover_percentage = 9.81 / thr2acc_;
+        if (hover_percentage > 0.8 || hover_percentage < 0.1) {
+            // ROS_INFO_THROTTLE(1, "Estimated hover_percentage >0.8 or <0.1! Perhaps the accel vibration is too high!");
+            thr2acc_ = hover_percentage > 0.8 ? 9.81 / 0.8 : thr2acc_;
+            thr2acc_ = hover_percentage < 0.1 ? 9.81 / 0.1 : thr2acc_;
+        }
+        // ROS_WARN("[PX4CTRL] hover_percentage = %f", hover_percentage);
+        return true;
+    }
+    return false;
+}
+
+void PlannerClass::MpcCalculate(Controller_Output_t& u)
+{
+    // calculate model predict control algorithm
+    ros::Time mpc_start = ros::Time::now();
+    mpc_->SetStatus(odom_data.p, odom_data.v, odom_data.a);
+    bool success_flag = mpc_->Run();
+    log_times_[3] = (ros::Time::now() - mpc_start).toSec() * 1000.0;
+
+    Eigen::Vector3d u_optimal, p_optimal, v_optimal, a_optimal, u_predict;
+    Eigen::MatrixXd A1, B1;
+    Eigen::VectorXd x_optimal = mpc_->X_0_;
+    if (success_flag) {
+        last_mpc_time_ = ros::Time::now();
+        for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
+            mpc_->GetOptimCmd(u_optimal, i);
+            mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);
+            x_optimal = A1 * x_optimal + B1 * u_optimal;
+        }
+        mpc_ctrl_index_ = ctrl_delay_/mpc_->MPC_STEP;
+
+        p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
+        v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
+        a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
+        if (!perfect_simu_flag_) CmdPublish(odom_data.p, v_optimal, a_optimal, u_optimal);
+        else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
+
+        std::vector<Eigen::Vector3d> path;
+        x_optimal = mpc_->X_0_;
+        for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+            mpc_->GetOptimCmd(u_predict, i);
+            mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);
+            x_optimal = A1 * x_optimal + B1 * u_predict;
+            path.push_back(Eigen::Vector3d(x_optimal(0,0), x_optimal(1,0), x_optimal(2,0)));
+        }
+        MPCPathPublish(path);
+    } else {
+        double delta_t = (ros::Time::now()-last_mpc_time_).toSec();
+        if (delta_t >= mpc_->MPC_STEP) {
+            mpc_ctrl_index_ += delta_t / mpc_->MPC_STEP;
+            last_mpc_time_ = ros::Time::now();
+        }
+        mpc_->GetOptimCmd(u_optimal, mpc_ctrl_index_);
+        // std::cout << "index: " << mpc_ctrl_index_ << " u_optimal:" << u_optimal.transpose() << std::endl;
+        // std::cout << "x_0: " << mpc_->X_0_.transpose() << std::endl << std::endl;
+        mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);
+        x_optimal = A1 * mpc_->X_0_ + B1 * u_optimal;
+        p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
+        v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
+        a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
+        if (!perfect_simu_flag_) CmdPublish(odom_data.p, v_optimal, a_optimal, u_optimal);
+        else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
+    }
     
+    ros::Time df_start = ros::Time::now();
+    estimateThrustModel(imu_data.a, odom_data.q);
+    a_optimal = a_optimal + Gravity_;
+    ComputeThrust(a_optimal);
+    ConvertCommand(a_optimal, u_optimal);
+    //BodyrateCtrlPub(rate_, thrust_, ros::Time::now());
 
-//     WriteLogTime();  // 写入性能日志
+    u.bodyrates = rate_;
+    u.thrust = thrust_;
 
-//     timer_mutex_.unlock();  // 解锁
-// }
-void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
+    timed_thrust_.push(std::pair<ros::Time, double>(ros::Time::now(), thrust_));
+    while (timed_thrust_.size() > 100) {
+        timed_thrust_.pop();
+    }
+    log_times_[4] = (ros::Time::now() - df_start).toSec() * 1000.0;
+}
+
+void PlannerClass::PathReplan(bool extend)
+{
+    astar_path_.clear();
+    waypoints_.clear();
+    follow_path_.clear();
+
+    Eigen::Vector3d start_p, end_p;
+    start_p = odom_data.p;
+    // start_p = odom_p_ + odom_v_ * 0.1;
+    if (extend) {
+        local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
+    } else {
+        // ROS_WARN("[MPC FSM]: Replan!");
+    }
+    local_astar_->setObsVector(local_pc_, expand_dyn_);
+
+    bool add_goal_flag = false;
+    end_p = goal_p_;
+    double delta_x = goal_p_.x() - odom_data.p.x();
+    double delta_y = goal_p_.y() - odom_data.p.y();
+    if (std::fabs(delta_x) > map_upp_.x() || std::fabs(delta_y) > map_upp_.y()) {
+        add_goal_flag = true;
+        if (std::fabs(delta_x) > std::fabs(delta_y)) {
+            end_p.x() = odom_data.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
+            end_p.y() = odom_data.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
+        } else {
+            end_p.x() = odom_data.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
+            end_p.y() = odom_data.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
+        }
+    }
+    // start_p.z() = end_p.z(); // only for 2d path searching
+    // std::cout << "odom: " << odom_p_.transpose() << " end_p: " << end_p.transpose() << std::endl;
+
+    int point_num = 8;
+    double r = expand_fix_ / 2;
+    if (local_astar_->CheckStartEnd(start_p) == false) {
+        ROS_INFO("\033[41;37m start point in obstacle \033[0m");
+        while (true) {
+            bool flag = false;
+            for(int i = 0; i < point_num; i++) {
+                Eigen::Vector3d pt;
+                pt << start_p.x() + r*sin(M_PI*2*i/point_num), start_p.y() + r*cos(M_PI*2*i/point_num), start_p.z();
+                double dis_min = 10000.0;
+                double dis = (odom_data.p - pt).norm();
+                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
+                    dis_min = dis;
+                    start_p = pt;
+                    flag = true;
+                }
+            }
+            if (flag) {
+                ROS_INFO("\033[1;32m Change start goal! %f %f %f\033[0m", start_p.x(), start_p.y(), start_p.z());
+                break;
+            }
+            r += expand_fix_ / 2;
+        }
+    }
+    r = expand_fix_ / 2;
+    if (local_astar_->CheckStartEnd(end_p) == false) {
+        ROS_INFO("\033[41;37m end point in obstacle \033[0m");
+        while (true) {
+            bool flag = false;
+            for(int i = 0; i < point_num; i++) {
+                Eigen::Vector3d pt;
+                pt << end_p.x() + r*sin(M_PI*2*i/point_num), end_p.y() + r*cos(M_PI*2*i/point_num), end_p.z();
+                double dis_min = 10000.0;
+                double dis = (odom_data.p - pt).norm();
+                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
+                    dis_min = dis;
+                    end_p = pt;
+                    flag = true;
+                }
+            }
+            if (flag) {
+                ROS_INFO("\033[1;32m Change end goal! %f %f %f\033[0m", end_p.x(), end_p.y(), end_p.z());
+                break;
+            }
+            r += expand_fix_ / 2;
+        }
+    }
+
+    bool search_flag = local_astar_->SearchPath(start_p, end_p);
+    if (search_flag) {
+        local_astar_->GetPath(astar_path_);
+        AstarPublish(astar_path_, 0, 0.1);
+
+        local_astar_->FloydHandle(astar_path_, waypoints_);
+        // waypoints_.insert(waypoints_.begin(), odom_p_);
+        if (add_goal_flag && local_astar_->CheckPoint(goal_p_)) waypoints_.push_back(goal_p_);
+        AstarPublish(waypoints_, 1, 0.1);
+
+        for (int i = 0; i < waypoints_.size()-1; i++) {
+            Eigen::Vector3d vector = waypoints_[i+1] - waypoints_[i];
+            int num = vector.norm() / path_dis_; // Insert a point every 0.1m (adjust)
+            for (int j = 0; j < num; j++) {
+                Eigen::Vector3d pt = waypoints_[i] + vector * j / num;
+                follow_path_.push_back(pt);
+            }
+        }
+        follow_path_.push_back(waypoints_.back());
+        AstarPublish(follow_path_, 2, path_dis_);
+    } else {
+        ROS_INFO("\033[41;37m No path! Stay at current point! \033[0m");
+        follow_path_.push_back(odom_data.p);
+    }
+
+    geometry_msgs::PoseStamped msg;
+    msg.header.frame_id = "world";
+    msg.header.stamp = ros::Time::now();
+    msg.pose.position.x = follow_path_.back().x();
+    msg.pose.position.y = follow_path_.back().y();
+    msg.pose.position.z = follow_path_.back().z();    
+    goal_pub_.publish(msg);
+
+    ros::Time now = ros::Time::now();
+    local_astar_->Reset(); // reset astar data at the end
+    // std::cout << "astar reset time is: " << (ros::Time::now() - now).toSec()*1000 << " ms. " << std::endl;
+}
+void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
+{
+    planes.resize(0, 4);
+    ros::Time start_t = ros::Time::now();
+    Eigen::Vector3d box_max(10, 10, 3), box_min(-10, -10, -0.5);
+
+    Eigen::Matrix<double, 6, 4> bd;
+    bd.setZero();
+    bd(0, 0) = 1.0;
+    bd(1, 0) = -1.0;
+    bd(2, 1) = 1.0;
+    bd(3, 1) = -1.0;
+    bd(4, 2) = 1.0;
+    bd(5, 2) = -1.0;
+    bd(0, 3) = -p1.x()-box_max.x();
+    bd(1, 3) =  p1.x()+box_min.x();
+    bd(2, 3) = -p1.y()-box_max.y();
+    bd(3, 3) =  p1.y()+box_min.y();
+    bd(4, 3) = -box_max.z();
+    bd(5, 3) = +box_min.z();
+
+    Polytope p;
+    if (local_pc_.empty()) { // 障碍物点云为空，直接返回一个方块
+        planes.resize(6, 4); // Ax + By + Cz + D = 0
+        planes.row(0) <<  1,  0,  0, -p1.x()-box_max.x();
+        planes.row(1) <<  0,  1,  0, -p1.y()-box_max.y();
+        planes.row(2) <<  0,  0,  1, -box_max.z();
+        planes.row(3) << -1,  0,  0,  p1.x()+box_min.x();
+        planes.row(4) <<  0, -1,  0,  p1.y()+box_min.y();
+        planes.row(5) <<  0,  0, -1,  box_min.z();
+        return ; 
+    }
+    Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(local_pc_[0].data(), 3, local_pc_.size());
+
+    bool success = emvp::emvp(bd, pp, p1, p2, p, sfc_dis_, false, 1);
+    if (success) {
+        if (index == 0) p.Visualize(sfc_pub_, "emvp", true);
+        p.Visualize(sfc_pub_, "emvp", false);
+        planes = p.GetPlanes();
+    } else {
+        p.Reset();
+    }
+}
+void PlannerClass::CmdMode()
+{
+        ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
+        // 路径规划触发逻辑
+        if (new_goal_flag_) {
+            // 新目标点：执行完整路径规划（扩展模式）
+            new_goal_flag_ = false;
+            replan_flag_ = false;
+            PathReplan(true);
+        }
+        if (new_goal_flag_ == false && replan_flag_) {
+            // 障碍物触发：执行局部重规划（非扩展模式）
+            replan_flag_ = false;
+            PathReplan(false);
+        }
+        log_times_[1] = (ros::Time::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
+
+        SetSFCAndGoal();
+}
+
+void PlannerClass::SetSFCAndGoal(void)
 {
     // === 安全飞行走廊(SFC)生成和MPC目标设置 ===
     ros::Time sfc_start = ros::Time::now();
@@ -60,7 +1221,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
         // 寻找路径上距离当前位置最近的点
         double min_dis = 10000.0;
         for (int i = 0; i < follow_path_.size(); i++) { 
-            double dis = (odom.p - follow_path_[i]).norm();
+            double dis = (odom_data.p - follow_path_[i]).norm();
             if (dis < min_dis) {
                 min_dis = dis;
                 astar_index_ = i;  // 记录最近点索引
@@ -72,7 +1233,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
             // 接近路径终点：在当前位置生成SFC
             goal_in_sfc = follow_path_.size();
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
-            GenerateAPolytope(odom.p, odom.p, planes, 0);
+            GenerateAPolytope(odom_data.p, odom_data.p, planes, 0);
             for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
                 mpc_->SetFSC(planes, i);  // 为整个MPC预测地平线设置相同SFC
             }
@@ -84,8 +1245,8 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
             int init_num = 0;
             
             // 检查当前位置是否在初始SFC内
-            if (mpc_->IsInFSC(odom.p, planes) == false) { 
-                init_num = (odom.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
+            if (mpc_->IsInFSC(odom_data.p, planes) == false) { 
+                init_num = (odom_data.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
                 ROS_INFO("\033[35m UAV is out sfc! init num is %d \033[0m", init_num);
             }
             
@@ -159,7 +1320,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
             
             // 计算参考速度
             Eigen::Vector3d v_r(0, 0, 0);
-            if (i == 0) v_r = (follow_path_[index] - odom.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
+            if (i == 0) v_r = (follow_path_[index] - odom_data.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
             else if (i == mpc_->MPC_HORIZON) v_r.setZero();                           // 最后一步：速度为零
             else v_r = (follow_path_[index] - last_p_ref) / mpc_->MPC_STEP;           // 中间步：点间速度
             last_p_ref = follow_path_[index];
@@ -173,7 +1334,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
         // === 偏航角控制 ===
         if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
             // 偏航角指向路径终点方向
-            yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
+            yaw_r_ = std::atan2(follow_path_.back().y()-odom_data.p.y(), follow_path_.back().x()-odom_data.p.x());
         }
     } else { 
         // 无有效路径：保持在初始位置
@@ -184,367 +1345,52 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom)
     }
     log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
-void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Eigen::Vector3d& imu_a)
+
+//sub topic
+void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
 {
-    // === MPC优化求解 ===
-    ros::Time mpc_start = ros::Time::now();
-    mpc_->SetStatus(odom.p, odom.v, odom.a);  // 设置当前状态 debug
-    bool success_flag = mpc_->Run();             // 执行MPC优化
-    log_times_[3] = (ros::Time::now() - mpc_start).toSec() * 1000.0;  // 记录MPC求解耗时
+    local_pc_mutex_.lock();
 
-    // === 控制指令生成和发布 ===
-    Eigen::Vector3d u_optimal, p_optimal, v_optimal, a_optimal, u_predict;
-    Eigen::MatrixXd A1, B1;
-    Eigen::VectorXd x_optimal = mpc_->X_0_;
-    
-    if (success_flag) {
-        // MPC求解成功：使用优化结果
-        last_mpc_time_ = ros::Time::now();
-        
-        // 考虑控制延迟，前向预测到实际执行时刻
-        for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
-            mpc_->GetOptimCmd(u_optimal, i);                    // 获取控制指令
-            mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);         // 获取系统矩阵
-            x_optimal = A1 * x_optimal + B1 * u_optimal;       // 状态预测
-        }
-        mpc_ctrl_index_ = ctrl_delay_/mpc_->MPC_STEP;
-
-        // 提取预测状态
-        p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);  // 位置
-        v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);  // 速度
-        a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);  // 加速度
-        
-        // 发布控制指令（根据仿真标志选择位置或速度控制）
-        if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
-        else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
-
-        // 生成并发布MPC预测轨迹用于可视化
-        std::vector<Eigen::Vector3d> path;
-        x_optimal = mpc_->X_0_;
-        for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
-            mpc_->GetOptimCmd(u_predict, i);
-            mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);
-            x_optimal = A1 * x_optimal + B1 * u_predict;
-            path.push_back(Eigen::Vector3d(x_optimal(0,0), x_optimal(1,0), x_optimal(2,0)));
-        }
-        MPCPathPublish(path);
-    } else {
-        // MPC求解失败：使用上次的控制序列
-        double delta_t = (ros::Time::now()-last_mpc_time_).toSec();
-        if (delta_t >= mpc_->MPC_STEP) {
-            mpc_ctrl_index_ += delta_t / mpc_->MPC_STEP;  // 更新控制索引
-            last_mpc_time_ = ros::Time::now();
-        }
-        
-        // 使用上次优化结果中的对应控制指令
-        mpc_->GetOptimCmd(u_optimal, mpc_ctrl_index_);
-        mpc_->SystemModel(A1, B1, mpc_->MPC_STEP);
-        x_optimal = A1 * mpc_->X_0_ + B1 * u_optimal;
-        
-        p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
-        v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
-        a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
-        
-        if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
-        else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
-    }
-    
-    // === 底层控制指令转换和发布 ===
-    ros::Time df_start = ros::Time::now();
-    estimateThrustModel(imu_a);       // 推力模型估计debug
-    a_optimal = a_optimal + Gravity_;   // 加上重力补偿
-    ComputeThrust(a_optimal,odom.q);          // 计算推力指令
-    ConvertCommand(a_optimal, u_optimal);  // 转换为角速度指令
-    // BodyrateCtrlPub(rate_, thrust_, ros::Time::now());  // 发布底层控制指令
-
-    // 维护推力历史队列（用于推力模型估计）
-    timed_thrust_.push(std::pair<ros::Time, double>(ros::Time::now(), thrust_));
-    while (timed_thrust_.size() > 100) {
-        timed_thrust_.pop();
-    }
-    log_times_[4] = (ros::Time::now() - df_start).toSec() * 1000.0;  // 记录底层控制耗时
-}
-void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
-{
-    planes.resize(0, 4);
-    ros::Time start_t = ros::Time::now();
-    Eigen::Vector3d box_max(10, 10, 3), box_min(-10, -10, -0.5);
-
-    Eigen::Matrix<double, 6, 4> bd;
-    bd.setZero();
-    bd(0, 0) = 1.0;
-    bd(1, 0) = -1.0;
-    bd(2, 1) = 1.0;
-    bd(3, 1) = -1.0;
-    bd(4, 2) = 1.0;
-    bd(5, 2) = -1.0;
-    bd(0, 3) = -p1.x()-box_max.x();
-    bd(1, 3) =  p1.x()+box_min.x();
-    bd(2, 3) = -p1.y()-box_max.y();
-    bd(3, 3) =  p1.y()+box_min.y();
-    bd(4, 3) = -box_max.z();
-    bd(5, 3) = +box_min.z();
-
-    Polytope p;
-    if (local_pc_.empty()) { // 障碍物点云为空，直接返回一个方块
-        planes.resize(6, 4); // Ax + By + Cz + D = 0
-        planes.row(0) <<  1,  0,  0, -p1.x()-box_max.x();
-        planes.row(1) <<  0,  1,  0, -p1.y()-box_max.y();
-        planes.row(2) <<  0,  0,  1, -box_max.z();
-        planes.row(3) << -1,  0,  0,  p1.x()+box_min.x();
-        planes.row(4) <<  0, -1,  0,  p1.y()+box_min.y();
-        planes.row(5) <<  0,  0, -1,  box_min.z();
-        return ; 
-    }
-    Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(local_pc_[0].data(), 3, local_pc_.size());
-
-    bool success = emvp::emvp(bd, pp, p1, p2, p, sfc_dis_, false, 1);
-    if (success) {
-        if (index == 0) p.Visualize(sfc_pub_, "emvp", true);
-        p.Visualize(sfc_pub_, "emvp", false);
-        planes = p.GetPlanes();
-    } else {
-        p.Reset();
-    }
-}
-
-void PlannerClass::PathReplan(bool extend, const Odom_Data_t& odom)
-{
-    // === 清空上次规划结果 ===
-    astar_path_.clear();    // 清空A*原始路径
-    waypoints_.clear();     // 清空关键路径点
-    follow_path_.clear();   // 清空最终跟踪路径
-
-    // === 设置起点和终点 ===
-    Eigen::Vector3d start_p, end_p;
-    start_p = odom.p;  // 起点设为当前位置
-    // start_p = odom_p_ + odom_v_ * 0.1;  // 备选：考虑速度的预测起点
-    
-    // 根据extend参数决定是否重新设置地图中心
-    if (extend) {
-        // 扩展模式：重新设置A*地图中心为当前位置（Z=0表示2D规划）
-        local_astar_->SetCenter(Eigen::Vector3d(odom.p.x(), odom.p.y(), 0.0));
-    } else {
-        // 重规划模式：保持现有地图中心
-        // ROS_WARN("[MPC FSM]: Replan!");
-    }
-    
-    // 使用当前障碍物点云和动态膨胀半径更新A*地图
-    local_astar_->setObsVector(local_pc_, expand_dyn_);
-
-    // === 目标点范围检查和调整 ===
-    bool add_goal_flag = false;  // 标记是否需要添加原始目标点
-    end_p = goal_p_;  // 终点初始设为目标点
-    double delta_x = goal_p_.x() - odom.p.x();
-    double delta_y = goal_p_.y() - odom.p.y();
-    
-    // 检查目标点是否超出局部地图范围
-    if (std::fabs(delta_x) > map_upp_.x() || std::fabs(delta_y) > map_upp_.y()) {
-        add_goal_flag = true;  // 标记需要后续添加原始目标点
-        
-        // 将终点调整到地图边界内，保持方向不变
-        if (std::fabs(delta_x) > std::fabs(delta_y)) {
-            // X方向距离更大，以X轴为主调整
-            end_p.x() = odom.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
-            end_p.y() = odom.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
-        } else {
-            // Y方向距离更大，以Y轴为主调整
-            end_p.x() = odom.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
-            end_p.y() = odom.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
-        }
-    }
-    // start_p.z() = end_p.z(); // 仅2D路径搜索时使用
-    // std::cout << "odom: " << odom_p_.transpose() << " end_p: " << end_p.transpose() << std::endl;
-
-    // === 起点安全性检查和调整 ===
-    int point_num = 8;  // 在起点周围生成8个候选点
-    double r = expand_fix_ / 2;  // 初始搜索半径
-    
-    if (local_astar_->CheckStartEnd(start_p) == false) {
-        // 起点在障碍物中，需要寻找安全的起点
-        ROS_INFO("\033[41;37m start point in obstacle \033[0m");
-        while (true) {
-            bool flag = false;
-            // 在当前半径r内的圆周上生成8个候选点
-            for(int i = 0; i < point_num; i++) {
-                Eigen::Vector3d pt;
-                pt << start_p.x() + r*sin(M_PI*2*i/point_num), 
-                      start_p.y() + r*cos(M_PI*2*i/point_num), 
-                      start_p.z();
-                double dis_min = 10000.0;
-                double dis = (odom.p - pt).norm();
-                // 找到距离当前位置最近的安全点
-                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
-                    dis_min = dis;
-                    start_p = pt;
-                    flag = true;
-                }
-            }
-            if (flag) {
-                ROS_INFO("\033[1;32m Change start goal! %f %f %f\033[0m", start_p.x(), start_p.y(), start_p.z());
-                break;
-            }
-            r += expand_fix_ / 2;  // 扩大搜索半径
-        }
-    }
-    
-    // === 终点安全性检查和调整 ===
-    r = expand_fix_ / 2;  // 重置搜索半径
-    if (local_astar_->CheckStartEnd(end_p) == false) {
-        // 终点在障碍物中，需要寻找安全的终点
-        ROS_INFO("\033[41;37m end point in obstacle \033[0m");
-        while (true) {
-            bool flag = false;
-            // 在当前半径r内的圆周上生成8个候选点
-            for(int i = 0; i < point_num; i++) {
-                Eigen::Vector3d pt;
-                pt << end_p.x() + r*sin(M_PI*2*i/point_num), 
-                      end_p.y() + r*cos(M_PI*2*i/point_num), 
-                      end_p.z();
-                double dis_min = 10000.0;
-                double dis = (odom.p - pt).norm();
-                // 找到距离当前位置最近的安全点
-                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
-                    dis_min = dis;
-                    end_p = pt;
-                    flag = true;
-                }
-            }
-            if (flag) {
-                ROS_INFO("\033[1;32m Change end goal! %f %f %f\033[0m", end_p.x(), end_p.y(), end_p.z());
-                break;
-            }
-            r += expand_fix_ / 2;  // 扩大搜索半径
-        }
-    }
-
-    // === A*路径搜索 ===
-    bool search_flag = local_astar_->SearchPath(start_p, end_p);
-    if (search_flag) {
-        // 路径搜索成功
-        
-        // 获取A*原始路径并发布可视化
-        local_astar_->GetPath(astar_path_);
-        AstarPublish(astar_path_, 0, 0.1);
-
-        // === Floyd路径优化 ===
-        // 使用Floyd算法移除冗余拐点，生成关键路径点
-        local_astar_->FloydHandle(astar_path_, waypoints_);
-        // waypoints_.insert(waypoints_.begin(), odom_p_);  // 可选：添加当前位置为第一个点
-        
-        // 如果原始目标点安全且之前被调整过，则添加到路径末尾
-        if (add_goal_flag && local_astar_->CheckPoint(goal_p_)) 
-            waypoints_.push_back(goal_p_);
-        AstarPublish(waypoints_, 1, 0.1);
-
-        // === 路径密化处理 ===
-        // 在关键路径点之间插入密集点，确保路径连续性
-        for (int i = 0; i < waypoints_.size()-1; i++) {
-            Eigen::Vector3d vector = waypoints_[i+1] - waypoints_[i];
-            int num = vector.norm() / path_dis_; // 每path_dis_米插入一个点（通常0.1m）
-            for (int j = 0; j < num; j++) {
-                Eigen::Vector3d pt = waypoints_[i] + vector * j / num;
-                follow_path_.push_back(pt);
-            }
-        }
-        // 添加最后一个关键点
-        follow_path_.push_back(waypoints_.back());
-        AstarPublish(follow_path_, 2, path_dis_);
-    } else {
-        // 路径搜索失败，保持当前位置
-        ROS_INFO("\033[41;37m No path! Stay at current point! \033[0m");
-        follow_path_.push_back(odom.p);
-    }
-
-    // === 发布目标点消息 ===
-    // 向其他节点发布最终的目标位置（路径终点）
-    geometry_msgs::PoseStamped msg;
-    msg.header.frame_id = "world";
-    msg.header.stamp = ros::Time::now();
-    msg.pose.position.x = follow_path_.back().x();
-    msg.pose.position.y = follow_path_.back().y();
-    msg.pose.position.z = follow_path_.back().z();    
-    goal_pub_.publish(msg);
-
-    // === 清理A*数据结构 ===
     ros::Time now = ros::Time::now();
-    local_astar_->Reset(); // 重置A*数据，释放内存
-    // std::cout << "astar reset time is: " << (ros::Time::now() - now).toSec()*1000 << " ms. " << std::endl;
-}
-
-void PlannerClass::PointCloudCorpAndSetMap(const Odom_Data_t& odom, PointCloud_Data_t& pc2)
-{
-    //要不要加锁
-    // 记录处理开始时间，用于性能统计
-    ros::Time now = ros::Time::now();
-    
-    // 清空上一帧的局部点云数据
     local_pc_.clear();
-    // === 点云裁剪过滤 ===
-    // 使用CropBox滤波器删除无用点云（超出局部地图范围的点）
-    pcl::CropBox<pcl::PointXYZ> cb;
-    // 设置裁剪盒子的最小边界：以当前位置为中心，向各方向扩展（地图大小-0.5）的距离
-    // Z轴最小高度设为0.2米（地面以上）
-    cb.setMin(Eigen::Vector4f(odom.p.x() - (map_upp_.x()-0.5), 
-                              odom.p.y() - (map_upp_.y()-0.5), 
-                              0.2, 1.0));
-    // 设置裁剪盒子的最大边界
-    cb.setMax(Eigen::Vector4f(odom.p.x() + (map_upp_.x()-0.5), 
-                              odom.p.y() + (map_upp_.y()-0.5), 
-                              map_upp_.z(), 1.0));
-    cb.setInputCloud(pc2.static_cloud_);
-    cb.filter(*pc2.static_cloud_);
+    pcl::PointCloud<pcl::PointXYZ> cloud;
+    pcl::fromROSMsg(*msg, cloud);
+
+    vec_cloud_.push_back(cloud);
+    if (vec_cloud_.size() > 10) vec_cloud_.pop_front();
+    static_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
+    for (int i = 0; i < vec_cloud_.size(); i++) *static_cloud_ += vec_cloud_[i];
     
-    // === 体素降采样处理 ===
+    pcl::CropBox<pcl::PointXYZ> cb; // CropBox filter (delete unuseful points)
+    cb.setMin(Eigen::Vector4f(odom_data.p.x() - (map_upp_.x()-0.5), odom_data.p.y() - (map_upp_.y()-0.5), 0.2, 1.0));
+    cb.setMax(Eigen::Vector4f(odom_data.p.x() + (map_upp_.x()-0.5), odom_data.p.y() + (map_upp_.y()-0.5), map_upp_.z(), 1.0));
+    cb.setInputCloud(static_cloud_);
+    cb.filter(*static_cloud_);
     pcl::VoxelGrid<pcl::PointXYZ> vf;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cur_cloud_ds(new pcl::PointCloud<pcl::PointXYZ>());
-    Eigen::Vector3f pos = odom.p.cast<float>();  // 当前位置（未在后续代码中使用）
-    
-    // 设置体素网格大小为0.2x0.2x0.2米，降低点云密度
+    Eigen::Vector3f pos = odom_data.p.cast<float>();
     vf.setLeafSize(0.2, 0.2, 0.2);
-    vf.setInputCloud(pc2.static_cloud_);
-    vf.filter(pc2.static_map_);  // 降采样后的结果存储在static_map_中
-    
-    // === 点云格式转换 ===
-    // 将PCL格式的点云转换为Eigen::Vector3d格式，存储到local_pc_容器中
-    // 这样便于后续A*算法和轨迹规划使用
-    for(auto &point: pc2.static_map_.points) {
+    vf.setInputCloud(static_cloud_);
+    vf.filter(static_map_);
+    for(auto &point: static_map_.points) {
         local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
     }
 
-    // === A*地图更新和路径检查 ===
-    static int obs_count = 0;  // 静态变量，记录检测到障碍物的连续次数（当前未使用）
-    
-    // 设置局部A*算法的地图中心为当前位置（Z轴设为0，表示2D规划）
-    local_astar_->SetCenter(Eigen::Vector3d(odom.p.x(), odom.p.y(), 0.0));
-    
-    // 使用处理后的点云更新A*算法的障碍物地图
-    // expand_fix_是固定的障碍物膨胀半径
+    // update astar map
+    static int obs_count = 0;
+    local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
     local_astar_->setObsVector(local_pc_, expand_fix_);
-    
-    // === 路径安全性检查 ===
-    // 提取从当前执行点到路径终点的剩余路径段
     std::vector<Eigen::Vector3d> remain_path;
-    remain_path.insert(remain_path.begin(), 
-                      follow_path_.begin()+astar_index_, 
-                      follow_path_.end());
-    
-    // 检查剩余路径是否仍然无障碍物，如果有障碍物则触发重规划
-    if (local_astar_->CheckPathFree(remain_path) == false) 
-        replan_flag_ = true;
-    
-    // === 注释掉的备选路径检查策略 ===
-    // 这是一种基于连续检测次数的重规划策略（当前未启用）
-    // bool flag = local_astar_->CheckPathFree(follow_path_);     // 检查整条路径是否自由
-    // if (flag == false) obs_count++;  // 检测到障碍物，计数加1
-    // else obs_count = 0;               // 路径自由，重置计数
-    // if (obs_count >= 2) {             // 连续2次检测到障碍物才触发重规划
+    remain_path.insert(remain_path.begin(), follow_path_.begin()+astar_index_, follow_path_.end());
+    if (local_astar_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+    // bool flag = local_astar_->CheckPathFree(follow_path_);     // check path is free or not
+    // if (flag == false) obs_count++;
+    // else obs_count = 0;
+    // if (obs_count >= 2) {
     //     obs_count = 0;
     //     replan_flag_ = true;
     // }
     
-    // === 注释掉的栅格地图发布代码 ===
-    // 以下代码用于发布占用栅格地图用于可视化（当前未启用）
     // local_astar_->GetOccupyPcl(cloud);
     // cloud.width = cloud.points.size();
     // cloud.height = 1;
@@ -554,115 +1400,7 @@ void PlannerClass::PointCloudCorpAndSetMap(const Odom_Data_t& odom, PointCloud_D
     // map_msg.header.frame_id = "world";
     // gird_map_pub_.publish(map_msg);
 
-    // 记录点云处理的耗时（毫秒），用于性能分析
-    // log_times_[0]对应mapping时间
     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
+
+    local_pc_mutex_.unlock();
 }
-
-// void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
-// {
-//     // 加锁保护局部点云数据，防止多线程访问冲突
-//     local_pc_mutex_.lock();
-
-//     // 记录处理开始时间，用于性能统计
-//     ros::Time now = ros::Time::now();
-    
-//     // 清空上一帧的局部点云数据
-//     local_pc_.clear();
-    
-//     // 将ROS消息格式的点云转换为PCL格式
-//     pcl::PointCloud<pcl::PointXYZ> cloud;
-//     pcl::fromROSMsg(*msg, cloud);
-
-//     // === 多帧点云融合处理 ===
-//     // 将当前帧点云加入历史点云队列
-//     vec_cloud_.push_back(cloud);
-//     // 保持队列大小不超过10帧，移除最旧的点云
-//     if (vec_cloud_.size() > 10) vec_cloud_.pop_front();
-    
-//     // 重置静态点云容器
-//     static_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
-//     // 融合所有历史帧点云到静态点云中
-//     for (int i = 0; i < vec_cloud_.size(); i++) *static_cloud_ += vec_cloud_[i];
-    
-
-
-//     // 解锁，允许其他线程访问局部点云数据
-//     local_pc_mutex_.unlock();
-// }
-
-// void PlannerClass::RCInCallback(const mavros_msgs::RCInConstPtr& msg)
-// {
-//     rc_mutex_.lock();
-
-//     if (simu_flag_) {
-//         mode_ = Command;
-//     } else {
-//         static UAVMode_e mode_last = Manual;
-//         static uint16_t takeoff_ch_last = 0;
-//         if (msg->channels[4] > 1650 && msg->channels[4] < 1800 && mode_last != Command) {
-//             mode_ = Command;
-//             ROS_INFO("\033[1;32m[MPC FSM]: Manual or Hover --> Command.\033[0m");
-//         }
-//         if (mode_ == Command && msg->channels[4] > 1850) {
-//             mode_ = Hover;
-//             goal_p_ = odom_p_;
-//             ROS_INFO("\033[32m[MPC FSM]: Command --> Hover. Pos is: %f %f %f\033[32m", goal_p_.x(), goal_p_.y(), goal_p_.z());
-//         }
-//         if (mode_ == Hover && takeoff_ch_last < 1500 && msg->channels[10] > 1500) {
-//             goal_p_.z() = 0.0;
-//             ROS_WARN("[MPC FSM]: Land! Pos is: %f %f %f", goal_p_.x(), goal_p_.y(), goal_p_.z());
-//         }
-        
-//         takeoff_ch_last = msg->channels[10];
-//         mode_last = mode_;
-//     }
-
-//     rc_mutex_.unlock();
-// }
-
-// void PlannerClass::GoalCallback(const geometry_msgs::PoseStampedConstPtr& msg)
-// {
-//     goal_mutex_.lock();
-
-//     static Eigen::Vector3d last_goal;
-//     Eigen::Vector3d new_goal(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
-
-//     if (last_goal != new_goal && mode_ == Command) {
-//         // goal_p_ << msg->pose.position.x, msg->pose.position.y, goal_p_.z(); // 2d path searching
-//         goal_p_ << msg->pose.position.x, msg->pose.position.y, msg->pose.position.z;
-//         if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
-//         if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
-//         new_goal_flag_ = true;
-//     }
-//     last_goal = new_goal;
-
-//     goal_mutex_.unlock();
-// }
-
-// void PlannerClass::OdomCallback(const nav_msgs::OdometryConstPtr& msg)
-// {
-//     odom_mutex_.lock();
-//     odom_time_ = msg->header.stamp;
-//     odom_p_ << msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z;
-//     odom_v_ << msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z; 
-//     odom_q_ = Eigen::Quaterniond(msg->pose.pose.orientation.w, msg->pose.pose.orientation.x, 
-//                                  msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
-//     odom_a_ = odom_q_ * Eigen::Vector3d(0, 0, 1) * (thrust_ * thr2acc_) - Gravity_; 
-//     if (perfect_simu_flag_) {
-//         odom_v_.setZero();
-//         // odom_a_.setZero();
-//     }
-//     yaw_ = tf::getYaw(msg->pose.pose.orientation);
-//     has_odom_flag_ = true;
-//     odom_mutex_.unlock();
-// }
-
-// void PlannerClass::IMUCallback(const sensor_msgs::ImuConstPtr& msg)
-// {
-//     imu_mutex_.lock();
-//     imu_a_ << msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z; // body frame
-//     Eigen::Matrix3d Rotate = odom_q_.toRotationMatrix().inverse();
-//     imu_a_ = Rotate * imu_a_;
-//     imu_mutex_.unlock();
-// }

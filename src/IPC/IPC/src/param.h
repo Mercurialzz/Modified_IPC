@@ -2,7 +2,7 @@
 #define __PARAM_H
 
 #include <ros/ros.h>
-
+#include <Eigen/Dense>
 class Parameter_t
 {
 public:
@@ -53,7 +53,7 @@ public:
 
     double thrust_limit;
     bool hover_esti_flag;
-    bool hover_prec;
+    bool hover_perc;
 
     bool yaw_ctrl_flag;
     double yaw_gain;
@@ -62,6 +62,13 @@ public:
     double goal_y;
     double goal_z;
     
+	double resolution;
+	Eigen::Vector3d map_size;
+	double expand_dyn;
+	double expand_fix;
+
+	int ref_dis;
+	double path_dis;
 
 	Parameter_t();
 	void config_from_ros_handle(const ros::NodeHandle &nh);
