@@ -14,6 +14,7 @@ public:
 		double cmd;
 		double imu;
 		double bat;
+		double goal;
 	};
 
 	struct RCReverse

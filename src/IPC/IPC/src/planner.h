@@ -144,6 +144,8 @@ public:
 	bool odom_is_received(const ros::Time &now_time);
 	bool imu_is_received(const ros::Time &now_time);
 	bool bat_is_received(const ros::Time &now_time);
+	bool goal_is_received();
+	void reset_goal_flag();
 	bool recv_new_odom();
 	State_t get_state() { return state; }
 	bool get_landed() { return takeoff_land.landed; }
@@ -233,6 +235,7 @@ private:
 	void reboot_FCU();
 	void CmdMode();
 	void PointCloudCorpAndSetMap(const Odom_Data_t& odom, PointCloud_Data_t& pc2);
+	void MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw);
 	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
 	void publish_attitude_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
 	void publish_trigger(const nav_msgs::Odometry &odom_msg);

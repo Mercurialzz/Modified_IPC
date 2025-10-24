@@ -44,6 +44,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "msg_timeout/cmd", msg_timeout.cmd);
 	read_essential_param(nh, "msg_timeout/imu", msg_timeout.imu);
 	read_essential_param(nh, "msg_timeout/bat", msg_timeout.bat);
+	read_essential_param(nh, "msg_timeout/goal", msg_timeout.goal);
 
 
 	read_essential_param(nh, "rc_reverse/roll", rc_reverse.roll);

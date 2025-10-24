@@ -82,6 +82,7 @@ void PlannerClass::StateUpdate(void)
             new_goal_flag_ = true;
             ROS_INFO("[px4ctrl] New goal received: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
         }
+        // new_goal_flag_ = false;
         last_goal = goal_data.new_goal;
         goal_data.recv_new_msg = false;
     }
@@ -145,9 +146,10 @@ void PlannerClass::process()
                     ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). No odom!");
                     break;
                 }
-                if (cmd_is_received(now_time))
+                if (goal_is_received())
                 {
-                    ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). You are sending commands before toggling into AUTO_HOVER, which is not allowed. Stop sending commands now!");
+                    ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). You are sending goals before toggling into AUTO_HOVER, which is not allowed. Stop sending commands now!");
+                    reset_goal_flag();
                     break;
                 }
                 if (odom_data.v.norm() > 3.0)
@@ -170,9 +172,10 @@ void PlannerClass::process()
                     ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. No odom!");
                     break;
                 }
-                if (cmd_is_received(now_time))
+                if (goal_is_received())
                 {
-                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. You are sending commands before toggling into AUTO_TAKEOFF, which is not allowed. Stop sending commands now!");
+                    ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. You are sending goals before toggling into AUTO_TAKEOFF, which is not allowed. Stop sending commands now!");
+                    reset_goal_flag();
                     break;
                 }
                 if (odom_data.v.norm() > 0.1)
@@ -228,9 +231,10 @@ void PlannerClass::process()
                     ROS_ERROR("[px4ctrl] Reject To Offboard. No odom!");
                     break;
                 }
-                if (cmd_is_received(now_time))
+                if (goal_is_received())
                 {
-                    ROS_ERROR("[px4ctrl] Reject To Offboard. You are sending commands before toggling into Offboard, which is not allowed. Stop sending commands now!");
+                    ROS_ERROR("[px4ctrl] Reject To Offboard. You are sending goals before toggling into Offboard, which is not allowed. Stop sending commands now!");
+                    reset_goal_flag();
                     break;
                 }
                 if (odom_data.v.norm() > 0.5)
@@ -297,12 +301,12 @@ void PlannerClass::process()
 
                 ROS_WARN("[px4ctrl] AUTO_HOVER(L2) --> MANUAL_CTRL(L1)");
             }
-            else if (rc_dy_data.is_command_mode && cmd_is_received(now_time))
+            else if (rc_dy_data.is_command_mode && goal_is_received())
             {
                 if (state_data.current_state.mode == "OFFBOARD")
                 {
                     state = CMD_CTRL;
-                    des = get_cmd_des();
+                    // des = get_cmd_des();
                     ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
                 }
             }
@@ -318,6 +322,7 @@ void PlannerClass::process()
             {
                 set_hov_with_rc();
                 des = get_hover_des();
+                MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
                 if ((rc_dy_data.enter_command_mode) ||
                     (takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
                 {
@@ -341,16 +346,18 @@ void PlannerClass::process()
 
                 ROS_WARN("[px4ctrl] From CMD_CTRL(L3) to MANUAL_CTRL(L1)!");
             }
-            else if (!rc_dy_data.is_command_mode || !cmd_is_received(now_time))
+            else if (!rc_dy_data.is_command_mode)
             {
                 state = AUTO_HOVER;
                 set_hov_with_odom();
                 des = get_hover_des();
+                MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
                 ROS_INFO("[px4ctrl] From CMD_CTRL(L3) to AUTO_HOVER(L2)!");
             }
             else
             {
-                des = get_cmd_des();
+                // des = get_cmd_des();
+                CmdMode();
             }
 
             if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
@@ -375,8 +382,7 @@ void PlannerClass::process()
             else if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
             {
                 des = get_rotor_speed_up_des(now_time);
-                //针对mpc，z轴方向的值要设小一点
-                des.p.z() = takeoff_land.start_pose.head<3>().z()-0.1;
+                MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
             }
             else if (odom_data.p(2) >= (takeoff_land.start_pose(2) + param.takeoff_land.height)) // reach the desired height
             {
@@ -390,6 +396,7 @@ void PlannerClass::process()
             else
             {
                 des = get_takeoff_land_des(param.takeoff_land.speed);
+                MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
             }
 
             break;
@@ -659,7 +666,14 @@ bool PlannerClass::cmd_is_received(const ros::Time &now_time)
 {
     return (now_time - cmd_data.rcv_stamp).toSec() < param.msg_timeout.cmd;
 }
-
+bool PlannerClass::goal_is_received()
+{
+    return new_goal_flag_;
+}
+void PlannerClass::reset_goal_flag()
+{
+    new_goal_flag_ = false;
+}
 bool PlannerClass::odom_is_received(const ros::Time &now_time)
 {
     return (now_time - odom_data.rcv_stamp).toSec() < param.msg_timeout.odom;
@@ -1403,4 +1417,12 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
 
     local_pc_mutex_.unlock();
+}
+
+void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw)
+{
+    for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+        mpc_->SetGoal(goal_pos, goal_vel, goal_acc, i);
+    }
+    yaw_r_ = yaw;
 }
