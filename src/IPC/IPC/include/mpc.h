@@ -88,6 +88,8 @@ public:
         nh.param("/ipc_node/mpc/uy_max", u_max_.y(),  1.0);
         nh.param("/ipc_node/mpc/uz_max", u_max_.z(),  1.0);
 
+        // ROS_INFO("v_max:%f", v_max_.x());
+        // std::cout << "v_max" << v_max_.x() << " " << v_max_.y() << " " << v_max_.z() ;
         ProblemFormation();
         X_0_.resize(mpc_.M.cols(), 1);
         X_r_.resize(mpc_.M.rows(), 1);

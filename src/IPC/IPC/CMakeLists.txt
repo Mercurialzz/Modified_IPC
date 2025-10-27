@@ -72,4 +72,11 @@ target_link_libraries(fast_avoid
   ${EIGEN3_LIBRARIES}
 )
 
+add_executable(trans_odom_node
+  src/trans_odom.cpp)
+add_dependencies(trans_odom_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(trans_odom_node
+  ${catkin_LIBRARIES}
+  ${EIGEN3_LIBRARIES}
+)
 

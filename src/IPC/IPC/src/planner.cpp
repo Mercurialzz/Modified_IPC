@@ -62,10 +62,11 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
 
 void PlannerClass::StateUpdate(void)
 {
+    // ROS_INFO("StateUpdate");
     //odom update
     if(odom_data.recv_new_msg)
     {
-        std::lock_guard<std::mutex> lock(odom_mutex_);
+         std::lock_guard<std::mutex> lock(odom_mutex_);
         odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
         odom_data.recv_new_msg = false;
     }
@@ -75,7 +76,7 @@ void PlannerClass::StateUpdate(void)
         static Eigen::Vector3d last_goal;
         if (last_goal != goal_data.new_goal)
         {
-            std::lock_guard<std::mutex> lock(goal_mutex_);
+             std::lock_guard<std::mutex> lock(goal_mutex_);
             goal_p_ = goal_data.new_goal;
             if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
             if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
@@ -471,7 +472,7 @@ void PlannerClass::process()
     {
         motors_idling(imu_data, u);
     }
-    else
+    else if(state != MANUAL_CTRL)
     {
         // controller update
         MpcCalculate(u);
@@ -570,6 +571,19 @@ Desired_State_t PlannerClass::get_cmd_des()
     des.j = cmd_data.j;
     des.yaw = cmd_data.yaw;
     des.yaw_rate = cmd_data.yaw_rate;
+
+    return des;
+}
+
+Desired_State_t PlannerClass::get_goal_des()
+{
+    Desired_State_t des;
+    des.p = cmd_data.p;
+    des.v = Eigen::Vector3d::Zero();
+    des.a = Eigen::Vector3d::Zero();
+    des.j = Eigen::Vector3d::Zero();
+    des.yaw = 0;
+    des.yaw_rate = 0;
 
     return des;
 }
@@ -721,7 +735,7 @@ void PlannerClass::publish_bodyrate_ctrl(const Controller_Output_t &u, const ros
 void PlannerClass::publish_trigger(const nav_msgs::Odometry &odom_msg)
 {
     geometry_msgs::PoseStamped msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.pose = odom_msg.pose.pose;
 
     traj_start_trigger_pub.publish(msg);
@@ -797,7 +811,7 @@ void PlannerClass::reboot_FCU()
 
 void PlannerClass::AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale) {
     visualization_msgs::Marker node_vis; 
-    node_vis.header.frame_id = "world";
+    node_vis.header.frame_id = "map";
     node_vis.header.stamp = ros::Time::now();
 
     if (type == 0) {
@@ -850,7 +864,7 @@ void PlannerClass::AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t typ
 }
 void PlannerClass::CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r) {
     quadrotor_msgs::PositionCommand msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp    = ros::Time::now();
     msg.position.x      = p_r.x();
     msg.position.y      = p_r.y();
@@ -878,7 +892,7 @@ void PlannerClass::CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::V
 }
 void PlannerClass::MPCPathPublish(std::vector<Eigen::Vector3d> &pt) {
     nav_msgs::Path msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
     for (int i = 0; i < pt.size(); i++) {
         geometry_msgs::PoseStamped pose;
@@ -1153,7 +1167,7 @@ void PlannerClass::PathReplan(bool extend)
     }
 
     geometry_msgs::PoseStamped msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
     msg.pose.position.x = follow_path_.back().x();
     msg.pose.position.y = follow_path_.back().y();
@@ -1411,7 +1425,7 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     // cloud.is_dense = true;
     // sensor_msgs::PointCloud2 map_msg;
     // pcl::toROSMsg(cloud, map_msg);
-    // map_msg.header.frame_id = "world";
+    // map_msg.header.frame_id = "map";
     // gird_map_pub_.publish(map_msg);
 
     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;

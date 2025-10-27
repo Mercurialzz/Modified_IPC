@@ -220,7 +220,7 @@ private:
 	void resetThrustMapping(void)
     {
         thr2acc_ = 9.81 / hover_perc_;
-        P_ = 100;
+        P_ = 1e6;
     }
 	void PathReplan(bool extend);
     void GeneratePolyOnPath();

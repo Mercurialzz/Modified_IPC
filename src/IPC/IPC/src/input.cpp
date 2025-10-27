@@ -201,7 +201,7 @@ void Odom_Data_t::feed(nav_msgs::OdometryConstPtr pMsg)
     uav_utils::extract_odometry(pMsg, p, v, q, w);
 
     yaw = fromQuaternion2yaw(q);
-// #define VEL_IN_BODY
+#define VEL_IN_BODY
 #ifdef VEL_IN_BODY /* Set to 1 if the velocity in odom topic is relative to current body frame, not to world frame.*/
     Eigen::Quaternion<double> wRb_q(msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z);
     Eigen::Matrix3d wRb = wRb_q.matrix();
@@ -341,7 +341,7 @@ void Takeoff_Land_Data_t::feed(quadrotor_msgs::TakeoffLandConstPtr pMsg)
 
     triggered = true;
     takeoff_land_cmd = pMsg->takeoff_land_cmd;
-    // std::cout << "triggered" << std::endl;
+    std::cout << "triggered" << std::endl;
 }
 
 Goal_Data_t::Goal_Data_t()

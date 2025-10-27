@@ -54,7 +54,7 @@ public:
 
     double thrust_limit;
     bool hover_esti_flag;
-    bool hover_perc;
+    double hover_perc;
 
     bool yaw_ctrl_flag;
     double yaw_gain;

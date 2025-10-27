@@ -13,7 +13,7 @@ void mySigintHandler(int sig)
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "ipc_node");
-    ros::NodeHandle nh;
+    ros::NodeHandle nh("~");
 
     signal(SIGINT, mySigintHandler);
     ros::Duration(1.0).sleep();
@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 
 
     ros::Subscriber imu_sub =
-        nh.subscribe<sensor_msgs::Imu>("/mavros/imu/data", // Note: do NOT change it to /mavros/imu/data_raw !!!
+        nh.subscribe<sensor_msgs::Imu>("imu", // Note: do NOT change it to /mavros/imu/data_raw !!!
                                        100,
                                        boost::bind(&Imu_Data_t::feed, &planner.imu_data, _1),
                                        ros::VoidConstPtr(),
@@ -64,7 +64,7 @@ int main(int argc, char** argv)
                                                 ros::TransportHints().tcpNoDelay());
 
     ros::Subscriber takeoff_land_sub =
-        nh.subscribe<quadrotor_msgs::TakeoffLand>("takeoff_land",
+        nh.subscribe<quadrotor_msgs::TakeoffLand>("/takeoff_land",
                                                   100,
                                                   boost::bind(&Takeoff_Land_Data_t::feed, &planner.takeoff_land_data, _1),
                                                   ros::VoidConstPtr(),
@@ -78,7 +78,7 @@ int main(int argc, char** argv)
                                                   ros::VoidConstPtr(),
                                                   ros::TransportHints().tcpNoDelay());
     ros::Subscriber point_cloud_sub =
-        nh.subscribe<sensor_msgs::PointCloud2>("point_cloud",
+        nh.subscribe<sensor_msgs::PointCloud2>("local_pc",
                                                10,
                                                boost::bind(&PlannerClass::LocalPcCallback, &planner, _1),
                                                ros::VoidConstPtr(),
@@ -90,7 +90,7 @@ int main(int argc, char** argv)
     planner.cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("cmd", 1);
     planner.mpc_path_pub_ = nh.advertise<nav_msgs::Path>("mpc_path", 1);
     planner.sfc_pub_ = nh.advertise<visualization_msgs::MarkerArray>("sfc", 1);
-    planner.ctrl_FCU_pub = nh.advertise<mavros_msgs::AttitudeTarget>("/mavros/setpoint_raw/attitude", 10);
+    planner.ctrl_FCU_pub = nh.advertise<mavros_msgs::AttitudeTarget>("px4ctrl", 10);
     planner.goal_pub_ = nh.advertise<geometry_msgs::PoseStamped>("goal_pub", 1);
     // ros topic service                                     
     planner.set_FCU_mode_srv = nh.serviceClient<mavros_msgs::SetMode>("/mavros/set_mode");

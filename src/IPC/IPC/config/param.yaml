@@ -12,7 +12,7 @@ sfc_dis:       0.3
 
 thrust_limit:  0.4
 hover_esti:    false
-hover_perc:    0.7
+hover_perc:    0.5
 
 yaw_ctrl_flag: true
 yaw_gain:      0.5
@@ -41,7 +41,7 @@ msg_timeout:
     imu:  0.5
     bat:  0.5
     goal: 0.5
-    
+
 astar:
   resolution:  0.1
   map_x_size:  20.0
