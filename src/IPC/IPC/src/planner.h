@@ -176,6 +176,7 @@ private:
 	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_;
 
 	Eigen::Vector3d goal_p_, map_upp_;
+	Eigen::Vector3d box_min_, box_max_;
 	Eigen::Vector3d rate_;
 	double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
 

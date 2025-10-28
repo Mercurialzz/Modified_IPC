@@ -19,6 +19,8 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     perfect_simu_flag_ = param.perfect_simu_flag;
     ctrl_delay_ = param.ctrl_delay;
     sfc_dis_ = param.sfc_dis;
+    box_max_ = param.box_max;
+    box_min_ = param.box_min;
     thrust_limit_ = param.thrust_limit;
     hover_esti_flag_ = param.hover_esti_flag;
     hover_perc_ = param.hover_perc;
@@ -1190,7 +1192,8 @@ void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eig
 {
     planes.resize(0, 4);
     ros::Time start_t = ros::Time::now();
-    Eigen::Vector3d box_max(10, 10, 3), box_min(-10, -10, -0.5);
+    Eigen::Vector3d box_max = box_max_;
+    Eigen::Vector3d box_min = box_min_;
 
     Eigen::Matrix<double, 6, 4> bd;
     bd.setZero();

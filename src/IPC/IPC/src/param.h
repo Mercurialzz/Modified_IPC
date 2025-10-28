@@ -69,6 +69,9 @@ public:
 	double expand_fix;
 
 	int ref_dis;
+	Eigen::Vector3d box_min;
+	Eigen::Vector3d box_max;
+	
 	double path_dis;
 
 	Parameter_t();

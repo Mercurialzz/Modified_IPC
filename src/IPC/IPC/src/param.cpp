@@ -16,7 +16,13 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "low_voltage", low_voltage);
 
 	read_essential_param(nh, "ctrl_delay", ctrl_delay);
-	read_essential_param(nh, "sfc_dis", sfc_dis);
+	read_essential_param(nh, "sfc/sfc_dis", sfc_dis);
+	read_essential_param(nh, "sfc/box_min_x", box_min.x());
+	read_essential_param(nh, "sfc/box_min_y", box_min.y());
+	read_essential_param(nh, "sfc/box_min_z", box_min.z());
+	read_essential_param(nh, "sfc/box_max_x", box_max.x());
+	read_essential_param(nh, "sfc/box_max_y", box_max.y());
+	read_essential_param(nh, "sfc/box_max_z", box_max.z());
 	
 	read_essential_param(nh, "thrust_limit", thrust_limit);
 	read_essential_param(nh, "hover_esti", hover_esti_flag);

@@ -8,7 +8,6 @@ max_manual_vel: 4.0
 low_voltage:   13.2 # 4S battery
 
 ctrl_delay:    0.0
-sfc_dis:       0.3
 
 thrust_limit:  0.9
 hover_esti:    true
@@ -42,13 +41,23 @@ msg_timeout:
     bat:  0.5
     goal: 0.5
 
+sfc:           
+ sfc_dis:       1.0
+ box_min_x:     -6.0
+ box_min_y:     -6.0
+ box_min_z:     -0.5
+
+ box_max_x:     6.0
+ box_max_y:     6.0
+ box_max_z:     6.0
+
 astar:
-  resolution:  0.2
-  map_x_size:  8.0
-  map_y_size:  8.0
-  map_z_size:  8.0
-  expand_dyn:  0.5
-  expand_fix:  0.3
+  resolution:  0.25
+  map_x_size:  50.0
+  map_y_size:  50.0
+  map_z_size:  10.0
+  expand_dyn:  1.0  ##障碍物膨胀，得设置成和安全飞行走廊的安全距离一致
+  expand_fix:  1.0
 
 fsm:
   ref_dis:     5
