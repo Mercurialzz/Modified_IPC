@@ -1,7 +1,7 @@
 #----------------- MPC param -----------------#
-simulation:    true
+simulation:    false
 perfect_simu:  false
-mass:          2.4 # kg
+mass:          8.5 # kg
 gra:           9.81 
 ctrl_freq_max: 100.0
 max_manual_vel: 4.0
@@ -10,12 +10,12 @@ low_voltage:   13.2 # 4S battery
 ctrl_delay:    0.0
 sfc_dis:       0.3
 
-thrust_limit:  0.4
-hover_esti:    false
+thrust_limit:  0.9
+hover_esti:    true
 hover_perc:    0.5
 
 yaw_ctrl_flag: true
-yaw_gain:      0.5
+yaw_gain:      0.6
 
 goal_x:        0.0
 goal_y:        0.0
@@ -43,15 +43,15 @@ msg_timeout:
     goal: 0.5
 
 astar:
-  resolution:  0.1
-  map_x_size:  20.0
-  map_y_size:  20.0
-  map_z_size:  3.0
+  resolution:  0.2
+  map_x_size:  8.0
+  map_y_size:  8.0
+  map_z_size:  8.0
   expand_dyn:  0.5
   expand_fix:  0.3
 
 fsm:
-  ref_dis:     6
+  ref_dis:     5
   path_dis:    0.05
 
 mpc:
@@ -65,8 +65,8 @@ mpc:
   R_u:         0.0
   R_u_con:     0.2
   R_pN:        2000.0
-  R_vN:        1000.0
-  R_aN:        1000.0
+  R_vN:        200.0
+  R_aN:        200.0
 
   D_x:         0.0
   D_y:         0.0
@@ -79,16 +79,16 @@ mpc:
   vy_max:      10.0
   vz_max:      10.0
 
-  ax_min:     -20.0
-  ay_min:     -20.0
+  ax_min:     -10.0
+  ay_min:     -10.0
   az_min:     -10.0
-  ax_max:      20.0
-  ay_max:      20.0
-  az_max:      20.0
+  ax_max:      10.0
+  ay_max:      10.0
+  az_max:      10.0
 
-  ux_min:     -50.0
-  uy_min:     -50.0
-  uz_min:     -50.0
-  ux_max:      50.0
-  uy_max:      50.0
-  uz_max:      50.0
+  ux_min:     -100.0
+  uy_min:     -100.0
+  uz_min:     -100.0
+  ux_max:      100.0
+  uy_max:      100.0
+  uz_max:      100.0

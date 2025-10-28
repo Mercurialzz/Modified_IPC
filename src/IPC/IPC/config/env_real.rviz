@@ -101,7 +101,7 @@ Visualization Manager:
         Shaft Length: 1
         Shaft Radius: 0.05000000074505806
         Value: Axes
-      Topic: /lidar_slam/imu_propagate
+      Topic: /mavros/local_position/odom
       Unreliable: false
       Value: true
     - Class: rviz/MarkerArray

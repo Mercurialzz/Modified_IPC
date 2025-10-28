@@ -66,8 +66,9 @@ void PlannerClass::StateUpdate(void)
     //odom update
     if(odom_data.recv_new_msg)
     {
-         std::lock_guard<std::mutex> lock(odom_mutex_);
+        //  std::lock_guard<std::mutex> lock(odom_mutex_);
         odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
+        yaw_ = odom_data.yaw;
         odom_data.recv_new_msg = false;
     }
     //goal update
@@ -76,7 +77,7 @@ void PlannerClass::StateUpdate(void)
         static Eigen::Vector3d last_goal;
         if (last_goal != goal_data.new_goal)
         {
-             std::lock_guard<std::mutex> lock(goal_mutex_);
+            //  std::lock_guard<std::mutex> lock(goal_mutex_);
             goal_p_ = goal_data.new_goal;
             if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
             if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
@@ -307,6 +308,7 @@ void PlannerClass::process()
                 if (state_data.current_state.mode == "OFFBOARD")
                 {
                     state = CMD_CTRL;
+                    des = get_goal_des(goal_p_);
                     // des = get_cmd_des();
                     ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
                 }
@@ -323,7 +325,7 @@ void PlannerClass::process()
             {
                 set_hov_with_rc();
                 des = get_hover_des();
-                MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
+                // MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
                 if ((rc_dy_data.enter_command_mode) ||
                     (takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
                 {
@@ -352,13 +354,14 @@ void PlannerClass::process()
                 state = AUTO_HOVER;
                 set_hov_with_odom();
                 des = get_hover_des();
-                MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
+                // MPCSetGoal(des.p, des.v, des.a, des.yaw);//debug
                 ROS_INFO("[px4ctrl] From CMD_CTRL(L3) to AUTO_HOVER(L2)!");
             }
             else
             {
+                des = get_goal_des(goal_p_);
                 // des = get_cmd_des();
-                CmdMode();
+                // CmdMode();
             }
 
             if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
@@ -383,7 +386,7 @@ void PlannerClass::process()
             else if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
             {
                 des = get_rotor_speed_up_des(now_time);
-                MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
+                // MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
             }
             else if (odom_data.p(2) >= (takeoff_land.start_pose(2) + param.takeoff_land.height)) // reach the desired height
             {
@@ -397,7 +400,7 @@ void PlannerClass::process()
             else
             {
                 des = get_takeoff_land_des(param.takeoff_land.speed);
-                MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
+                // MPCSetGoal(des.p, des.v, des.a, des.yaw); //debug
             }
 
             break;
@@ -459,14 +462,6 @@ void PlannerClass::process()
             break;
     }
 
-    // STEP2: estimate thrust model
-    if (state == AUTO_HOVER || state == CMD_CTRL)
-    {
-        // controller.estimateThrustModel(imu_data.a, bat_data.volt, param);
-        //controller.estimateThrustModel(imu_data.a,param);
-
-    }
-
     // STEP3: solve and update new control commands
     if (rotor_low_speed_during_land) // used at the start of auto takeoff
     {
@@ -475,7 +470,17 @@ void PlannerClass::process()
     else if(state != MANUAL_CTRL)
     {
         // controller update
-        MpcCalculate(u);
+        if(state == AUTO_HOVER || state == AUTO_TAKEOFF)
+        {
+            MPCSetGoal(des.p, des.v, des.a, des.yaw);
+        }
+        else if(state == CMD_CTRL)
+        {
+            //MPCSetGoal(des.p, des.v, des.a, des.yaw);
+            CmdMode(odom_data,des);
+        }
+        ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
+        MpcCalculate(odom_data, imu_data, u);
     }
 
     // STEP4: publish control commands to mavros
@@ -485,6 +490,7 @@ void PlannerClass::process()
     land_detector(state, des, odom_data);
     // cout << takeoff_land.landed << " ";
     // fflush(stdout);
+    WriteLogTime();
 
     // STEP6: Clear flags beyound their lifetime
     dy_data.enter_hover_mode = false;
@@ -575,14 +581,14 @@ Desired_State_t PlannerClass::get_cmd_des()
     return des;
 }
 
-Desired_State_t PlannerClass::get_goal_des()
+Desired_State_t PlannerClass::get_goal_des(Eigen::Vector3d goal_p)
 {
     Desired_State_t des;
-    des.p = cmd_data.p;
+    des.p = goal_p;
     des.v = Eigen::Vector3d::Zero();
     des.a = Eigen::Vector3d::Zero();
     des.j = Eigen::Vector3d::Zero();
-    des.yaw = 0;
+    des.yaw = hover_pose(3);
     des.yaw_rate = 0;
 
     return des;
@@ -912,8 +918,8 @@ void PlannerClass::WriteLogTime(void) {
     write_time_ << std::endl;
 }
 
-void PlannerClass::ComputeThrust(Eigen::Vector3d acc) {
-    const Eigen::Vector3d zB =  odom_data.q * Eigen::Vector3d::UnitZ();
+void PlannerClass::ComputeThrust(Eigen::Vector3d acc,const Eigen::Quaterniond& q) {
+    const Eigen::Vector3d zB =  q * Eigen::Vector3d::UnitZ();
     double des_acc_norm = acc.dot(zB);
     thrust_ = des_acc_norm / thr2acc_;
 }
@@ -990,11 +996,11 @@ bool PlannerClass::estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen:
     return false;
 }
 
-void PlannerClass::MpcCalculate(Controller_Output_t& u)
+void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u)
 {
     // calculate model predict control algorithm
     ros::Time mpc_start = ros::Time::now();
-    mpc_->SetStatus(odom_data.p, odom_data.v, odom_data.a);
+    mpc_->SetStatus(odom.p, odom.v, odom.a);
     bool success_flag = mpc_->Run();
     log_times_[3] = (ros::Time::now() - mpc_start).toSec() * 1000.0;
 
@@ -1002,6 +1008,7 @@ void PlannerClass::MpcCalculate(Controller_Output_t& u)
     Eigen::MatrixXd A1, B1;
     Eigen::VectorXd x_optimal = mpc_->X_0_;
     if (success_flag) {
+        ROS_INFO_THROTTLE(1,"MPC SUCCESS");
         last_mpc_time_ = ros::Time::now();
         for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
             mpc_->GetOptimCmd(u_optimal, i);
@@ -1013,7 +1020,7 @@ void PlannerClass::MpcCalculate(Controller_Output_t& u)
         p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
         v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
         a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
-        if (!perfect_simu_flag_) CmdPublish(odom_data.p, v_optimal, a_optimal, u_optimal);
+        if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
 
         std::vector<Eigen::Vector3d> path;
@@ -1026,6 +1033,7 @@ void PlannerClass::MpcCalculate(Controller_Output_t& u)
         }
         MPCPathPublish(path);
     } else {
+        ROS_INFO_THROTTLE(1,"MPC NOT SUCCESS!!");
         double delta_t = (ros::Time::now()-last_mpc_time_).toSec();
         if (delta_t >= mpc_->MPC_STEP) {
             mpc_ctrl_index_ += delta_t / mpc_->MPC_STEP;
@@ -1039,14 +1047,14 @@ void PlannerClass::MpcCalculate(Controller_Output_t& u)
         p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
         v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
         a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
-        if (!perfect_simu_flag_) CmdPublish(odom_data.p, v_optimal, a_optimal, u_optimal);
+        if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
     }
     
     ros::Time df_start = ros::Time::now();
-    estimateThrustModel(imu_data.a, odom_data.q);
+    estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_;
-    ComputeThrust(a_optimal);
+    ComputeThrust(a_optimal,odom.q);
     ConvertCommand(a_optimal, u_optimal);
     //BodyrateCtrlPub(rate_, thrust_, ros::Time::now());
 
@@ -1060,34 +1068,34 @@ void PlannerClass::MpcCalculate(Controller_Output_t& u)
     log_times_[4] = (ros::Time::now() - df_start).toSec() * 1000.0;
 }
 
-void PlannerClass::PathReplan(bool extend)
+void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des)
 {
     astar_path_.clear();
     waypoints_.clear();
     follow_path_.clear();
 
     Eigen::Vector3d start_p, end_p;
-    start_p = odom_data.p;
+    start_p = odom.p;
     // start_p = odom_p_ + odom_v_ * 0.1;
     if (extend) {
-        local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
+        local_astar_->SetCenter(Eigen::Vector3d(odom.p.x(), odom.p.y(), 0.0));
     } else {
         // ROS_WARN("[MPC FSM]: Replan!");
     }
     local_astar_->setObsVector(local_pc_, expand_dyn_);
 
     bool add_goal_flag = false;
-    end_p = goal_p_;
-    double delta_x = goal_p_.x() - odom_data.p.x();
-    double delta_y = goal_p_.y() - odom_data.p.y();
+    end_p = des.p;
+    double delta_x = des.p.x() - odom.p.x();
+    double delta_y = des.p.y() - odom.p.y();
     if (std::fabs(delta_x) > map_upp_.x() || std::fabs(delta_y) > map_upp_.y()) {
         add_goal_flag = true;
         if (std::fabs(delta_x) > std::fabs(delta_y)) {
-            end_p.x() = odom_data.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
-            end_p.y() = odom_data.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
+            end_p.x() = odom.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
+            end_p.y() = odom.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
         } else {
-            end_p.x() = odom_data.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
-            end_p.y() = odom_data.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
+            end_p.x() = odom.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
+            end_p.y() = odom.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
         }
     }
     // start_p.z() = end_p.z(); // only for 2d path searching
@@ -1103,7 +1111,7 @@ void PlannerClass::PathReplan(bool extend)
                 Eigen::Vector3d pt;
                 pt << start_p.x() + r*sin(M_PI*2*i/point_num), start_p.y() + r*cos(M_PI*2*i/point_num), start_p.z();
                 double dis_min = 10000.0;
-                double dis = (odom_data.p - pt).norm();
+                double dis = (odom.p - pt).norm();
                 if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
                     dis_min = dis;
                     start_p = pt;
@@ -1126,7 +1134,7 @@ void PlannerClass::PathReplan(bool extend)
                 Eigen::Vector3d pt;
                 pt << end_p.x() + r*sin(M_PI*2*i/point_num), end_p.y() + r*cos(M_PI*2*i/point_num), end_p.z();
                 double dis_min = 10000.0;
-                double dis = (odom_data.p - pt).norm();
+                double dis = (odom.p - pt).norm();
                 if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
                     dis_min = dis;
                     end_p = pt;
@@ -1148,7 +1156,7 @@ void PlannerClass::PathReplan(bool extend)
 
         local_astar_->FloydHandle(astar_path_, waypoints_);
         // waypoints_.insert(waypoints_.begin(), odom_p_);
-        if (add_goal_flag && local_astar_->CheckPoint(goal_p_)) waypoints_.push_back(goal_p_);
+        if (add_goal_flag && local_astar_->CheckPoint(des.p)) waypoints_.push_back(des.p);
         AstarPublish(waypoints_, 1, 0.1);
 
         for (int i = 0; i < waypoints_.size()-1; i++) {
@@ -1163,7 +1171,7 @@ void PlannerClass::PathReplan(bool extend)
         AstarPublish(follow_path_, 2, path_dis_);
     } else {
         ROS_INFO("\033[41;37m No path! Stay at current point! \033[0m");
-        follow_path_.push_back(odom_data.p);
+        follow_path_.push_back(odom.p);
     }
 
     geometry_msgs::PoseStamped msg;
@@ -1221,7 +1229,7 @@ void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eig
         p.Reset();
     }
 }
-void PlannerClass::CmdMode()
+void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
         // 路径规划触发逻辑
@@ -1229,19 +1237,19 @@ void PlannerClass::CmdMode()
             // 新目标点：执行完整路径规划（扩展模式）
             new_goal_flag_ = false;
             replan_flag_ = false;
-            PathReplan(true);
+            PathReplan(true,odom,des);
         }
         if (new_goal_flag_ == false && replan_flag_) {
             // 障碍物触发：执行局部重规划（非扩展模式）
             replan_flag_ = false;
-            PathReplan(false);
+            PathReplan(false,odom,des);
         }
         log_times_[1] = (ros::Time::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
 
-        SetSFCAndGoal();
+        SetSFCAndGoal(odom,des);
 }
 
-void PlannerClass::SetSFCAndGoal(void)
+void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des)
 {
     // === 安全飞行走廊(SFC)生成和MPC目标设置 ===
     ros::Time sfc_start = ros::Time::now();
@@ -1249,7 +1257,7 @@ void PlannerClass::SetSFCAndGoal(void)
         // 寻找路径上距离当前位置最近的点
         double min_dis = 10000.0;
         for (int i = 0; i < follow_path_.size(); i++) { 
-            double dis = (odom_data.p - follow_path_[i]).norm();
+            double dis = (odom.p - follow_path_[i]).norm();
             if (dis < min_dis) {
                 min_dis = dis;
                 astar_index_ = i;  // 记录最近点索引
@@ -1261,7 +1269,7 @@ void PlannerClass::SetSFCAndGoal(void)
             // 接近路径终点：在当前位置生成SFC
             goal_in_sfc = follow_path_.size();
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
-            GenerateAPolytope(odom_data.p, odom_data.p, planes, 0);
+            GenerateAPolytope(odom.p, odom.p, planes, 0);
             for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
                 mpc_->SetFSC(planes, i);  // 为整个MPC预测地平线设置相同SFC
             }
@@ -1273,8 +1281,8 @@ void PlannerClass::SetSFCAndGoal(void)
             int init_num = 0;
             
             // 检查当前位置是否在初始SFC内
-            if (mpc_->IsInFSC(odom_data.p, planes) == false) { 
-                init_num = (odom_data.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
+            if (mpc_->IsInFSC(odom.p, planes) == false) { 
+                init_num = (odom.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
                 ROS_INFO("\033[35m UAV is out sfc! init num is %d \033[0m", init_num);
             }
             
@@ -1348,7 +1356,7 @@ void PlannerClass::SetSFCAndGoal(void)
             
             // 计算参考速度
             Eigen::Vector3d v_r(0, 0, 0);
-            if (i == 0) v_r = (follow_path_[index] - odom_data.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
+            if (i == 0) v_r = (follow_path_[index] - odom.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
             else if (i == mpc_->MPC_HORIZON) v_r.setZero();                           // 最后一步：速度为零
             else v_r = (follow_path_[index] - last_p_ref) / mpc_->MPC_STEP;           // 中间步：点间速度
             last_p_ref = follow_path_[index];
@@ -1362,13 +1370,13 @@ void PlannerClass::SetSFCAndGoal(void)
         // === 偏航角控制 ===
         if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
             // 偏航角指向路径终点方向
-            yaw_r_ = std::atan2(follow_path_.back().y()-odom_data.p.y(), follow_path_.back().x()-odom_data.p.x());
+            yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
         }
     } else { 
         // 无有效路径：保持在初始位置
         yaw_r_ = 0.0;
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
-            mpc_->SetGoal(goal_p_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
+            mpc_->SetGoal(des.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
         }
     }
     log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
@@ -1419,14 +1427,14 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     //     replan_flag_ = true;
     // }
     
-    // local_astar_->GetOccupyPcl(cloud);
-    // cloud.width = cloud.points.size();
-    // cloud.height = 1;
-    // cloud.is_dense = true;
-    // sensor_msgs::PointCloud2 map_msg;
-    // pcl::toROSMsg(cloud, map_msg);
-    // map_msg.header.frame_id = "map";
-    // gird_map_pub_.publish(map_msg);
+    local_astar_->GetOccupyPcl(cloud);
+    cloud.width = cloud.points.size();
+    cloud.height = 1;
+    cloud.is_dense = true;
+    sensor_msgs::PointCloud2 map_msg;
+    pcl::toROSMsg(cloud, map_msg);
+    map_msg.header.frame_id = "map";
+    gird_map_pub_.publish(map_msg);
 
     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
 

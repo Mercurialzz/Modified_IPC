@@ -204,6 +204,7 @@ private:
 	// ---- control related ----
 	Desired_State_t get_hover_des();
 	Desired_State_t get_cmd_des();
+	Desired_State_t get_goal_des(Eigen::Vector3d goal_p);
 
 	// ---- auto takeoff/land ----
 	void motors_idling(const Imu_Data_t &imu, Controller_Output_t &u);
@@ -211,29 +212,30 @@ private:
 	void set_start_pose_for_takeoff_land(const Odom_Data_t &odom);
 	Desired_State_t get_rotor_speed_up_des(const ros::Time now);
 	Desired_State_t get_takeoff_land_des(const double speed);
+	
 
 	// ---- tools ----
 	void WriteLogTime(void);
-	void ComputeThrust(Eigen::Vector3d acc);
+	void ComputeThrust(Eigen::Vector3d acc,const Eigen::Quaterniond& q);
 	void ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk);
-	bool estimateThrustModel(const Eigen::Vector3d &est_a);
+	bool estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen::Quaterniond &q);
 	void resetThrustMapping(void)
     {
         thr2acc_ = 9.81 / hover_perc_;
-        P_ = 1e6;
+        P_ = 100;
     }
-	void PathReplan(bool extend);
+	void PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des);
     void GeneratePolyOnPath();
     void GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
 	void set_hov_with_odom();
 	void set_hov_with_rc();
-	void MpcCalculate(Controller_Output_t& u);
-	bool estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen::Quaterniond &q);
-	void SetSFCAndGoal();
+	void MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u);
+
+	void SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des);
 	bool toggle_offboard_mode(bool on_off); // It will only try to toggle once, so not blocked.
 	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
 	void reboot_FCU();
-	void CmdMode();
+	void CmdMode(const Odom_Data_t& odom,const Desired_State_t& des);
 	void PointCloudCorpAndSetMap(const Odom_Data_t& odom, PointCloud_Data_t& pc2);
 	void MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw);
 	void publish_bodyrate_ctrl(const Controller_Output_t &u, const ros::Time &stamp);
