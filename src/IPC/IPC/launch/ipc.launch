@@ -19,7 +19,7 @@
 
     </node>
 
-    <node name="ipc" pkg="rviz" type="rviz" args="-d $(find ipc)/config/env.rviz"/>
+    <node name="ipc" pkg="rviz" type="rviz" args="-d $(find ipc)/config/env_real.rviz"/>
     
     <!-- <include file="$(find test_interface)/launch/so3_quadrotor_sim.xml"></include> -->
 </launch>

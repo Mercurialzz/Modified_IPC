@@ -58,6 +58,9 @@ public:
 
     bool yaw_ctrl_flag;
     double yaw_gain;
+	double yaw_ki;
+	double yaw_rate_limit;
+	double yaw_i_limit;
     
     double goal_x;
     double goal_y;
@@ -71,7 +74,7 @@ public:
 	int ref_dis;
 	Eigen::Vector3d box_min;
 	Eigen::Vector3d box_max;
-	
+
 	double path_dis;
 
 	Parameter_t();

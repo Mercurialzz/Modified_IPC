@@ -30,6 +30,9 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 
 	read_essential_param(nh, "yaw_ctrl_flag", yaw_ctrl_flag);
 	read_essential_param(nh, "yaw_gain", yaw_gain);
+	read_essential_param(nh,"yaw_ki", yaw_ki);
+	read_essential_param(nh,"yaw_rate_limit", yaw_rate_limit);
+	read_essential_param(nh,"yaw_i_limit", yaw_i_limit);
 	
 	read_essential_param(nh, "goal_x", goal_x);
 	read_essential_param(nh, "goal_y", goal_y);

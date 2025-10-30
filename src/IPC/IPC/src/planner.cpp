@@ -26,6 +26,11 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     hover_perc_ = param.hover_perc;
     yaw_gain_ = param.yaw_gain;
     yaw_ctrl_flag_ = param.yaw_ctrl_flag;
+    yaw_ki_ = param.yaw_ki;
+    yaw_rate_limit_ = param.yaw_rate_limit;
+    yaw_i_limit_ = param.yaw_i_limit;
+
+
     goal_p_ = Eigen::Vector3d(param.goal_x, param.goal_y, param.goal_z);
 
     resolution_ = param.resolution;
@@ -62,12 +67,19 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     rc_dy_data.reset();
 }
 
+
 void PlannerClass::StateUpdate(void)
 {
     // ROS_INFO("StateUpdate");
     //odom update
+    static bool odom_int = false;
     if(odom_data.recv_new_msg)
     {
+        if(!odom_int) {
+            init_yaw_ = odom_data.yaw;
+            ROS_INFO("Initial yaw set to %.2f rad", init_yaw_);
+            odom_int = true;
+        }
         //  std::lock_guard<std::mutex> lock(odom_mutex_);
         odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
         yaw_ = odom_data.yaw;
@@ -485,6 +497,7 @@ void PlannerClass::process()
         MpcCalculate(odom_data, imu_data, u);
     }
 
+    ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
     // STEP4: publish control commands to mavros
     publish_bodyrate_ctrl(u, now_time);
 
@@ -925,15 +938,46 @@ void PlannerClass::ComputeThrust(Eigen::Vector3d acc,const Eigen::Quaterniond& q
     double des_acc_norm = acc.dot(zB);
     thrust_ = des_acc_norm / thr2acc_;
 }
+
+
 void PlannerClass::ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk) {
     Eigen::Vector3d xB, yB, zB, xC;
     if (yaw_ctrl_flag_) {
+        // double yaw_error = yaw_r_ - yaw_;
+        // if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
+        // if (yaw_error < -M_PI) yaw_error += M_PI * 2;
+        // yaw_dot_r_ = yaw_error * yaw_gain_;
+         // --- PI 控制 yaw_dot_r_ ---
         double yaw_error = yaw_r_ - yaw_;
-        if (yaw_error >  M_PI) yaw_error -= M_PI * 2;
-        if (yaw_error < -M_PI) yaw_error += M_PI * 2;
-        yaw_dot_r_ = yaw_error * yaw_gain_;
+        if (yaw_error >  M_PI) yaw_error -= 2*M_PI;
+        if (yaw_error < -M_PI) yaw_error += 2*M_PI;
+
+        static ros::Time last_t(0);
+        ros::Time now = ros::Time::now();
+        double dt = 0.0;
+        if (last_t.toSec() > 0.0) dt = (now - last_t).toSec();
+        last_t = now;
+
+        // 积分更新与限幅（抗风up）
+        yaw_int_ += yaw_error * dt;
+        if (yaw_int_ >  yaw_i_limit_) yaw_int_ =  yaw_i_limit_;
+        if (yaw_int_ < -yaw_i_limit_) yaw_int_ = -yaw_i_limit_;
+
+        // PI 输出与速率饱和
+        double yaw_rate_cmd = yaw_gain_ * yaw_error + yaw_ki_ * yaw_int_;
+        if (yaw_rate_cmd >  yaw_rate_limit_) yaw_rate_cmd =  yaw_rate_limit_;
+        if (yaw_rate_cmd < -yaw_rate_limit_) yaw_rate_cmd = -yaw_rate_limit_;
+
+        yaw_dot_r_ = yaw_rate_cmd;       
     } else {
-        yaw_dot_r_ = (0 - yaw_) * yaw_gain_;
+        // 无航向跟随：回到初始朝向（保持原逻辑）
+        double yaw_error = init_yaw_ - yaw_;
+        if (yaw_error >  M_PI) yaw_error -= 2*M_PI;
+        if (yaw_error < -M_PI) yaw_error += 2*M_PI;
+        yaw_dot_r_ = yaw_error * yaw_gain_;
+        //限幅
+        if (yaw_dot_r_ >  yaw_rate_limit_) yaw_dot_r_ =  yaw_rate_limit_;
+        if (yaw_dot_r_ < -yaw_rate_limit_) yaw_dot_r_ = -yaw_rate_limit_;
     }
     xC << std::cos(yaw_), std::sin(yaw_), 0;
 
@@ -1070,6 +1114,26 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     log_times_[4] = (ros::Time::now() - df_start).toSec() * 1000.0;
 }
 
+/*
+ * 功能: 基于局部A*进行路径重规划，生成用于跟踪的稠密路径 follow_path_
+ * 触发: 1) 新目标点到来（extend=true 表示扩大局部地图中心范围）
+ *       2) 当前路径被新障碍阻断（extend=false 的局部重规划）
+ * 输入:
+ *   - extend: 是否扩展局部地图中心（通常新目标时为 true）
+ *   - odom:   当前里程计（起点、裁剪范围中心等来源）
+ *   - des:    目标期望状态（终点 des.p）
+ * 关键内部参数:
+ *   - map_upp_:   局部地图半尺寸(正半轴)，用于限制A*搜索窗口与目标截断
+ *   - resolution_: A* 栅格分辨率，用于边界截断时留余量
+ *   - expand_dyn_: 动态障碍物膨胀半径，构建占据栅格(局部碰撞地图)时使用
+ *   - expand_fix_: 启动/终点采样修正半径基准（遇占据时逐步扩大）
+ *   - path_dis_:   路径插值间距(米)，控制 follow_path_ 的稠密程度
+ * 输出/副作用:
+ *   - astar_path_:   原始A*路径
+ *   - waypoints_:    Floyd 平滑/简化后的关键点
+ *   - follow_path_:  最终用于跟踪的稠密路径（发布可视化与最后点作为goal_pub_）
+ *   - goal_pub_:     发布最终跟踪的末端点（PoseStamped）
+ */
 void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des)
 {
     astar_path_.clear();
@@ -1077,25 +1141,29 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
     follow_path_.clear();
 
     Eigen::Vector3d start_p, end_p;
-    start_p = odom.p;
+    start_p = odom.p;                 // A* 起点：当前位姿位置
     // start_p = odom_p_ + odom_v_ * 0.1;
-    if (extend) {
+    if (extend) {                    // 扩展模式：以当前位姿为中心重置局部A*中心
         local_astar_->SetCenter(Eigen::Vector3d(odom.p.x(), odom.p.y(), 0.0));
     } else {
         // ROS_WARN("[MPC FSM]: Replan!");
     }
+    // 使用最新局部点云构建占据栅格，带动态膨胀(安全边界)
     local_astar_->setObsVector(local_pc_, expand_dyn_);
 
     bool add_goal_flag = false;
-    end_p = des.p;
+    end_p = des.p;                   // 目标终点：使用期望位置 des.p
     double delta_x = des.p.x() - odom.p.x();
     double delta_y = des.p.y() - odom.p.y();
+    // 若目标超出当前局部窗口(map_upp_)，将终点截断到窗口边界，后续可在靠近后再追加真正目标
     if (std::fabs(delta_x) > map_upp_.x() || std::fabs(delta_y) > map_upp_.y()) {
         add_goal_flag = true;
         if (std::fabs(delta_x) > std::fabs(delta_y)) {
+            // X 方向越界：按窗口极限截断，Y 按比例缩放，减去一个 resolution_ 作为边界余量
             end_p.x() = odom.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
             end_p.y() = odom.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
         } else {
+            // Y 方向越界：按窗口极限截断，X 按比例缩放，减去一个 resolution_ 作为边界余量
             end_p.x() = odom.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
             end_p.y() = odom.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
         }
@@ -1103,14 +1171,15 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
     // start_p.z() = end_p.z(); // only for 2d path searching
     // std::cout << "odom: " << odom_p_.transpose() << " end_p: " << end_p.transpose() << std::endl;
 
-    int point_num = 8;
-    double r = expand_fix_ / 2;
+    int point_num = 8;               // 极坐标采样数量（圆上等分）
+    double r = expand_fix_ / 2;      // 起点/终点落在占据内时的初始采样半径
     if (local_astar_->CheckStartEnd(start_p) == false) {
         ROS_INFO("\033[41;37m start point in obstacle \033[0m");
         while (true) {
             bool flag = false;
             for(int i = 0; i < point_num; i++) {
                 Eigen::Vector3d pt;
+                // 在起点所在平面上按半径 r 进行圆周采样，寻找最近的可行起点
                 pt << start_p.x() + r*sin(M_PI*2*i/point_num), start_p.y() + r*cos(M_PI*2*i/point_num), start_p.z();
                 double dis_min = 10000.0;
                 double dis = (odom.p - pt).norm();
@@ -1124,16 +1193,17 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
                 ROS_INFO("\033[1;32m Change start goal! %f %f %f\033[0m", start_p.x(), start_p.y(), start_p.z());
                 break;
             }
-            r += expand_fix_ / 2;
+            r += expand_fix_ / 2;   // 若本轮未找到可行点，增大采样半径重试
         }
     }
-    r = expand_fix_ / 2;
+    r = expand_fix_ / 2;             // 终点同样的极坐标采样修正逻辑
     if (local_astar_->CheckStartEnd(end_p) == false) {
         ROS_INFO("\033[41;37m end point in obstacle \033[0m");
         while (true) {
             bool flag = false;
             for(int i = 0; i < point_num; i++) {
                 Eigen::Vector3d pt;
+                // 在终点所在平面上按半径 r 进行圆周采样，寻找最近的可行终点
                 pt << end_p.x() + r*sin(M_PI*2*i/point_num), end_p.y() + r*cos(M_PI*2*i/point_num), end_p.z();
                 double dis_min = 10000.0;
                 double dis = (odom.p - pt).norm();
@@ -1147,35 +1217,40 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
                 ROS_INFO("\033[1;32m Change end goal! %f %f %f\033[0m", end_p.x(), end_p.y(), end_p.z());
                 break;
             }
-            r += expand_fix_ / 2;
+            r += expand_fix_ / 2;   // 若本轮未找到可行点，增大采样半径重试
         }
     }
 
+    // 执行A*搜索
     bool search_flag = local_astar_->SearchPath(start_p, end_p);
     if (search_flag) {
-        local_astar_->GetPath(astar_path_);
-        AstarPublish(astar_path_, 0, 0.1);
+        local_astar_->GetPath(astar_path_);     // 获取原始节点路径
+        AstarPublish(astar_path_, 0, 0.1);      // 发布可视化：A*原始路径（黑色）
 
-        local_astar_->FloydHandle(astar_path_, waypoints_);
+        local_astar_->FloydHandle(astar_path_, waypoints_);  // Floyd 平滑/去冗余为关键路径点
         // waypoints_.insert(waypoints_.begin(), odom_p_);
+        // 如果之前因为越界而截断了终点，且真实目标点在可行空间内，则把真实目标追加为最后关键点
         if (add_goal_flag && local_astar_->CheckPoint(des.p)) waypoints_.push_back(des.p);
-        AstarPublish(waypoints_, 1, 0.1);
+        AstarPublish(waypoints_, 1, 0.1);       // 发布可视化：平滑路径关键点（绿色）
 
         for (int i = 0; i < waypoints_.size()-1; i++) {
             Eigen::Vector3d vector = waypoints_[i+1] - waypoints_[i];
-            int num = vector.norm() / path_dis_; // Insert a point every 0.1m (adjust)
+            // 按 path_dis_ 等间距插值，生成稠密跟踪路径
+            int num = vector.norm() / path_dis_; // 每 path_dis_ 米插入一个点
             for (int j = 0; j < num; j++) {
                 Eigen::Vector3d pt = waypoints_[i] + vector * j / num;
                 follow_path_.push_back(pt);
             }
         }
-        follow_path_.push_back(waypoints_.back());
-        AstarPublish(follow_path_, 2, path_dis_);
+        follow_path_.push_back(waypoints_.back());        // 确保包含终点
+        AstarPublish(follow_path_, 2, path_dis_);         // 发布可视化：稠密跟踪路径（蓝色）
     } else {
         ROS_INFO("\033[41;37m No path! Stay at current point! \033[0m");
+        // 搜索失败：保持当前位置为唯一跟踪点（保证下游模块有目标）
         follow_path_.push_back(odom.p);
     }
 
+    // 发布当前的最终跟踪目标为 Path 的末尾点（供其他模块使用/可视化）
     geometry_msgs::PoseStamped msg;
     msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
@@ -1185,7 +1260,7 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
     goal_pub_.publish(msg);
 
     ros::Time now = ros::Time::now();
-    local_astar_->Reset(); // reset astar data at the end
+    local_astar_->Reset(); // 重置A*内部缓存（占据、开闭集等），避免下次重用旧状态
     // std::cout << "astar reset time is: " << (ros::Time::now() - now).toSec()*1000 << " ms. " << std::endl;
 }
 void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
@@ -1257,6 +1332,8 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     // === 安全飞行走廊(SFC)生成和MPC目标设置 ===
     ros::Time sfc_start = ros::Time::now();
     if (follow_path_.size() > 0) { // 存在有效路径
+        have_path_ = true;
+        last_have_path_ = true;
         // 寻找路径上距离当前位置最近的点
         double min_dis = 10000.0;
         for (int i = 0; i < follow_path_.size(); i++) { 
@@ -1351,33 +1428,62 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         // === MPC参考轨迹设置 ===
         mpc_goals_.clear();
         Eigen::Vector3d last_p_ref;
+
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
             // 计算MPC每步的参考位置索引
             int index = astar_index_ + i * ref_dis_;
             if (index >= goal_in_sfc) index = goal_in_sfc;      // 不超过SFC覆盖范围
             if (index >= follow_path_.size()) index = follow_path_.size() - 1;  // 不超过路径长度
             
-            // 计算参考速度
+            //计算参考速度
             Eigen::Vector3d v_r(0, 0, 0);
             if (i == 0) v_r = (follow_path_[index] - odom.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
             else if (i == mpc_->MPC_HORIZON) v_r.setZero();                           // 最后一步：速度为零
             else v_r = (follow_path_[index] - last_p_ref) / mpc_->MPC_STEP;           // 中间步：点间速度
             last_p_ref = follow_path_[index];
-            
-            // 设置MPC目标：位置、速度、加速度（零）
+
             mpc_->SetGoal(follow_path_[index], v_r, Eigen::Vector3d::Zero(), i);
+            // std::cout << "mpc goal " << i << ": " << follow_path_[index].transpose() << " v: " << v_r.transpose() << std::endl;
             mpc_goals_.push_back(follow_path_[index]);
+            
         }
         AstarPublish(mpc_goals_, 3, 0.1);  // 发布MPC目标点可视化
 
+        // // === 偏航角控制 ===
+        // if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
+        //     // 偏航角指向路径终点方向
+        //     yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
+        // }
         // === 偏航角控制 ===
-        if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
-            // 偏航角指向路径终点方向
-            yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
+        // 航向指向路径切线方向：从当前位置在路径上取一个前瞻点，计算二维方向
+        if (follow_path_.size() >= 2) {
+            // 前瞻距离 L（米），可按需要调大/调小：大则更“看远”，小则更贴合当前弯道
+            const double L = std::max(0.2, 3.0 * path_dis_);   // 例如 0.5 m 或 3*path_dis_
+            const int lookahead_steps = std::max(1, int(L / path_dis_));
+
+            const int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
+            const int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
+
+            const Eigen::Vector2d dir(
+                follow_path_[i1].x() - follow_path_[i0].x(),
+                follow_path_[i1].y() - follow_path_[i0].y()
+            );
+
+            if (dir.norm() > 1e-3) {
+                yaw_r_ = std::atan2(dir.y(), dir.x());
+            }
+            // 若方向极短则保持当前 yaw_r_ 不变，避免抖动
         }
     } else { 
-        // 无有效路径：保持在初始位置
-        yaw_r_ = 0.0;
+        have_path_ = false;
+        static double yaw_now;
+        if(have_path_ != last_have_path_) {
+            ROS_WARN("\033[41;37m No valid path! Stay at current point! \033[0m");
+            yaw_now = yaw_;
+            last_have_path_ = have_path_;
+        }
+        // 无有效路径：保持在当前位置
+        yaw_r_ = yaw_now; //debug
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
             mpc_->SetGoal(des.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
         }

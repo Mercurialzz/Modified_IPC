@@ -19,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   visualization_msgs
   sensor_msgs
   pcl_ros
+  rog_map
   mavros
   rosfmt
   uav_utils

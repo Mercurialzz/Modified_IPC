@@ -55,7 +55,7 @@ mpc:
 
   ax_min:     -20.0
   ay_min:     -20.0
-  az_min:     -10.0
+  az_min:     -20.0
   ax_max:      20.0
   ay_max:      20.0
   az_max:      20.0

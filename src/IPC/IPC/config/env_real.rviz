@@ -65,7 +65,7 @@ Visualization Manager:
       Value: true
     - Class: rviz/Axes
       Enabled: true
-      Length: 5
+      Length: 4
       Name: Axes
       Radius: 0.10000000149011612
       Reference Frame: <Fixed Frame>
@@ -93,8 +93,8 @@ Visualization Manager:
       Position Tolerance: 0.0010000000474974513
       Shape:
         Alpha: 1
-        Axes Length: 0.25
-        Axes Radius: 0.25
+        Axes Length: 0.5
+        Axes Radius: 0.2
         Color: 255; 25; 0
         Head Length: 0.30000001192092896
         Head Radius: 0.10000000149011612
@@ -112,34 +112,34 @@ Visualization Manager:
         {}
       Queue Size: 1
       Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 4.472070693969727
-        Min Value: -0.24216723442077637
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: AxisColor
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Min Color: 0; 0; 0
-      Name: PointCloud2
-      Position Transformer: XYZ
-      Queue Size: 1
-      Selectable: true
-      Size (Pixels): 5
-      Size (m): 0.10000000149011612
-      Style: Points
-      Topic: /cloud_obstacle
-      Unreliable: false
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: false
+    # - Alpha: 1
+    #   Autocompute Intensity Bounds: true
+    #   Autocompute Value Bounds:
+    #     Max Value: 4.472070693969727
+    #     Min Value: -0.24216723442077637
+    #     Value: true
+    #   Axis: Z
+    #   Channel Name: intensity
+    #   Class: rviz/PointCloud2
+    #   Color: 255; 255; 255
+    #   Color Transformer: AxisColor
+    #   Decay Time: 0
+    #   Enabled: false
+    #   Invert Rainbow: false
+    #   Max Color: 255; 255; 255
+    #   Min Color: 0; 0; 0
+    #   Name: PointCloud2
+    #   Position Transformer: XYZ
+    #   Queue Size: 1
+    #   Selectable: true
+    #   Size (Pixels): 5
+    #   Size (m): 0.10000000149011612
+    #   Style: Points
+    #   Topic: /cloud_obstacle
+    #   Unreliable: false
+    #   Use Fixed Frame: true
+    #   Use rainbow: true
+    #   Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz/Path
@@ -163,34 +163,34 @@ Visualization Manager:
       Topic: /mpc/path
       Unreliable: false
       Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: Intensity
-      Decay Time: 2
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Min Color: 0; 0; 0
-      Name: PointCloud2
-      Position Transformer: XYZ
-      Queue Size: 10
-      Selectable: true
-      Size (Pixels): 5
-      Size (m): 0.009999999776482582
-      Style: Points
-      Topic: /cloud_obstacle
-      Unreliable: false
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: false
+    # - Alpha: 1
+    #   Autocompute Intensity Bounds: true
+    #   Autocompute Value Bounds:
+    #     Max Value: 10
+    #     Min Value: -10
+    #     Value: true
+    #   Axis: Z
+    #   Channel Name: intensity
+    #   Class: rviz/PointCloud2
+    #   Color: 255; 255; 255
+    #   Color Transformer: Intensity
+    #   Decay Time: 2
+    #   Enabled: false
+    #   Invert Rainbow: false
+    #   Max Color: 255; 255; 255
+    #   Min Color: 0; 0; 0
+    #   Name: PointCloud2
+    #   Position Transformer: XYZ
+    #   Queue Size: 10
+    #   Selectable: true
+    #   Size (Pixels): 5
+    #   Size (m): 0.009999999776482582
+    #   Style: Points
+    #   Topic: /cloud_obstacle
+    #   Unreliable: false
+    #   Use Fixed Frame: true
+    #   Use rainbow: true
+    #   Value: false
     - Alpha: 0.5
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -230,8 +230,8 @@ Visualization Manager:
       Class: rviz/PointCloud2
       Color: 255; 255; 255
       Color Transformer: AxisColor
-      Decay Time: 2
-      Enabled: false
+      Decay Time: 0
+      Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0

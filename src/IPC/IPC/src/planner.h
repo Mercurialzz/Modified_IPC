@@ -179,6 +179,11 @@ private:
 	Eigen::Vector3d box_min_, box_max_;
 	Eigen::Vector3d rate_;
 	double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
+	double init_yaw_{0};
+	double yaw_ki_{0.05};
+	double yaw_rate_limit_{1.5};
+	double yaw_i_limit_{0.5};
+	double yaw_int_{0.0};
 
 	int astar_index_{0};
     std::vector<Eigen::Vector3d> astar_path_;
@@ -188,6 +193,7 @@ private:
     std::vector<Eigen::Vector3d> local_pc_;
     std::vector<Eigen::Vector3d> local_pc_buffer_[10];
     std::vector<Eigen::Vector3d> mpc_goals_;
+	bool have_path_{false},last_have_path_{false};
 
 	double thr2acc_;
     double thrust_;
