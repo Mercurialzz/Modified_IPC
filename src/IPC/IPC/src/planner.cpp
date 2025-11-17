@@ -1054,7 +1054,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     Eigen::MatrixXd A1, B1;
     Eigen::VectorXd x_optimal = mpc_->X_0_;
     if (success_flag) {
-        ROS_INFO_THROTTLE(1,"MPC SUCCESS");
+        // ROS_INFO_THROTTLE(1,"MPC SUCCESS");
         last_mpc_time_ = ros::Time::now();
         for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
             mpc_->GetOptimCmd(u_optimal, i);
@@ -1079,7 +1079,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         }
         MPCPathPublish(path);
     } else {
-        ROS_INFO_THROTTLE(1,"MPC NOT SUCCESS!!");
+        ROS_WARN("MPC CANT SLOVE!!");
         double delta_t = (ros::Time::now()-last_mpc_time_).toSec();
         if (delta_t >= mpc_->MPC_STEP) {
             mpc_ctrl_index_ += delta_t / mpc_->MPC_STEP;
@@ -1099,7 +1099,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     
     ros::Time df_start = ros::Time::now();
     estimateThrustModel(imu.a, odom.q);
-    a_optimal = a_optimal + Gravity_;
+    a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备
     ComputeThrust(a_optimal,odom.q);
     ConvertCommand(a_optimal, u_optimal);
     //BodyrateCtrlPub(rate_, thrust_, ros::Time::now());
