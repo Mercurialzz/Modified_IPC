@@ -24,8 +24,8 @@
 #include <rog_map/rog_map_core/counter_map.h>
 
 using namespace rog_map;
-
-
+using namespace color_text;
+using namespace super_utils;
 namespace rog_map {
 
     void CounterMap::initCounterMap(
@@ -62,7 +62,7 @@ namespace rog_map {
     if (inflation_ratio % 2 == 0) {
         inflation_ratio += 1;
     }
-    std::cout << RED << " -- [CounterMap] inflation_ratio: " << inflation_ratio << std::endl;
+    std::cout << YELLOW << " -- [CounterMap] inflation_ratio: " << inflation_ratio << std::endl;
 #endif
         /* 2) compute the counter sliding map size i, which should be larger than prob map
          *   and consider the inflation step, to ensure the counter is correctly updated
@@ -130,15 +130,15 @@ namespace rog_map {
         }
 #ifdef COUNTER_MAP_DEBUG
         if (md_.occupied_cnt[addr] < 0 || md_.occupied_cnt[addr] > md_.sub_grid_num) {
-            std::cout << RED << "From type: " << GridTypeStr[from_type] << RESET << std::endl;
-            std::cout << RED << "To type: " << GridTypeStr[to_type] << RESET << std::endl;
-            std::cout << RED << "Occupied counter: " << md_.occupied_cnt[addr] << RESET << std::endl;
+            std::cout << YELLOW << "From type: " << GridTypeStr[from_type] << RESET << std::endl;
+            std::cout << YELLOW << "To type: " << GridTypeStr[to_type] << RESET << std::endl;
+            std::cout << YELLOW << "Occupied counter: " << md_.occupied_cnt[addr] << RESET << std::endl;
             throw std::runtime_error(" -- [CouterMap]: Occupied counter is out of range.");
         }
         if (md_.unknown_cnt[addr] < 0 || md_.unknown_cnt[addr] > md_.sub_grid_num) {
-            std::cout << RED << "From type: " << from_type << RESET << std::endl;
-            std::cout << RED << "To type: " << to_type << RESET << std::endl;
-            std::cout << RED << "Unknown counter: " << md_.unknown_cnt[addr] << RESET << std::endl;
+            std::cout << YELLOW << "From type: " << from_type << RESET << std::endl;
+            std::cout << YELLOW << "To type: " << to_type << RESET << std::endl;
+            std::cout << YELLOW << "Unknown counter: " << md_.unknown_cnt[addr] << RESET << std::endl;
             throw std::runtime_error(" -- [CouterMap]: Unknown counter is out of range.");
         }
 #endif

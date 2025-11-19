@@ -28,6 +28,8 @@
 
 // #define COUNTER_MAP_DEBUG
 namespace rog_map {
+    using super_utils::GridType;
+
 
     class CounterMap : public SlidingMap {
     public:
@@ -35,7 +37,7 @@ namespace rog_map {
 
         CounterMap() = default;
 
-        ~CounterMap() = default;
+        virtual ~CounterMap() = default;
 
 
         void updateGridCounter(const Vec3f &pos,

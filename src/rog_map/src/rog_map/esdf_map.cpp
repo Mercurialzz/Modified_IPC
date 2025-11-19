@@ -23,6 +23,9 @@
 
 #include "rog_map/esdf_map.h"
 
+using namespace color_text;
+using namespace super_utils;
+
 namespace rog_map {
 
     void ESDFMap::initESDFMap(const rog_map::Vec3i &half_prob_map_size_i, const double &prob_map_resolution,
@@ -61,7 +64,7 @@ namespace rog_map {
 
 
     void ESDFMap::resetLocalMap() {
-        std::cout << RED << " -- [ESDFMap] Clear all local map." << RESET << std::endl;
+        std::cout << YELLOW << " -- [ESDFMap] Clear all local map." << RESET << std::endl;
         std::fill(md_.unknown_cnt.begin(), md_.unknown_cnt.end(), md_.sub_grid_num);
         std::fill(md_.occupied_cnt.begin(), md_.occupied_cnt.end(), 0);
     }
@@ -245,47 +248,12 @@ namespace rog_map {
 #endif
     }
 
-    void ESDFMap::getESDFOccPC2(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
-                                sensor_msgs::PointCloud2 &pc2) {
-        std::lock_guard<std::mutex> lck(update_esdf_mtx);
-        pcl_pc.clear();
-        Vec3i box_min_i, box_max_i;
-        posToGlobalIndex(box_min_d, box_min_i);
-        posToGlobalIndex(box_max_d, box_max_i);
-//            box_min_i = box_min_i.cwiseMax(update_local_map_min_i_);
-//            box_max_i = box_max_i.cwiseMin(update_local_map_max_i_);
-
-
-        for (int x = box_min_i.x(); x <= box_max_i.x(); x++) {
-            for (int y = box_min_i.y(); y <= box_max_i.y(); y++) {
-                for (int z = box_min_i.z(); z <= box_max_i.z(); z++) {
-                    Vec3i id_g(x, y, z);
-                    if (isOccupied(id_g)) {
-                        Vec3f pos;
-                        globalIndexToPos(id_g, pos);
-                        pcl::PointXYZI pt;
-                        pt.x = pos(0);
-                        pt.y = pos(1);
-                        pt.z = pos(2);
-                        pcl_pc.push_back(pt);
-                    }
-                }
-            }
-        }
-
-        pcl_pc.width = pcl_pc.points.size();
-        pcl_pc.height = 1;
-        pcl_pc.is_dense = true;
-        pcl::toROSMsg(pcl_pc, pc2);
-        pc2.header.frame_id = "world";
-    }
-
     void ESDFMap::resetOneCell(const int &hash_id) {
     }
 
 
-    void ESDFMap::getPositiveESDFPC2(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
-                                     const double &visualize_z, sensor_msgs::PointCloud2 &pc2) {
+    void ESDFMap::getPositiveESDFPointCloud(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
+                                     const double &visualize_z, pcl::PointCloud<pcl::PointXYZI> & pcl_pc) {
         std::lock_guard<std::mutex> lck(update_esdf_mtx);
         pcl_pc.clear();
         Vec3i box_min_i, box_max_i;
@@ -314,13 +282,11 @@ namespace rog_map {
         pcl_pc.width = pcl_pc.points.size();
         pcl_pc.height = 1;
         pcl_pc.is_dense = true;
-        pcl::toROSMsg(pcl_pc, pc2);
-        pc2.header.frame_id = "world";
     }
 
 
-    void ESDFMap::getNegativeESDFPC2(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
-                                     const double &visualize_z, sensor_msgs::PointCloud2 &pc2) {
+    void ESDFMap::getNegativeESDFPointCloud(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
+                                     const double &visualize_z, pcl::PointCloud<pcl::PointXYZI> & pcl_pc) {
         std::lock_guard<std::mutex> lck(update_esdf_mtx);
         pcl_pc.clear();
         Vec3i box_min_i, box_max_i;
@@ -349,8 +315,6 @@ namespace rog_map {
         pcl_pc.width = pcl_pc.points.size();
         pcl_pc.height = 1;
         pcl_pc.is_dense = true;
-        pcl::toROSMsg(pcl_pc, pc2);
-        pc2.header.frame_id = "world";
     }
 
     template<typename F_get_val, typename F_set_val>

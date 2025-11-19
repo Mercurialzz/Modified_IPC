@@ -24,92 +24,107 @@
 #pragma once
 
 #include <rog_map/prob_map.h>
-#include <nav_msgs/Odometry.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <utils/common_lib.hpp>
-#include <dynamic_reconfigure/server.h>
-#include <rog_map/VizConfig.h>
-#include <utils/visual_utils.hpp>
+#include <rog_map/rog_map_core/common_lib.hpp>
+#include <super_utils/type_utils.hpp>
+#include <fmt/color.h>
 
 namespace rog_map {
     using namespace std;
+    using super_utils::vec_Vec3i;
+    using super_utils::RobotState;
 
-    typedef pcl::PointXYZINormal PointType;
+    typedef pcl::PointXYZI PointType;
     typedef pcl::PointCloud<PointType> PointCloudXYZIN;
 
     class ROGMap : public ProbMap {
+        const bool IS = true;
+        const bool NOT = false;
+
+        virtual const double getSystemWalltimeNow() = 0;
+
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-        typedef shared_ptr<ROGMap> Ptr;
+        explicit ROGMap() = default;
 
-        ROGMap(const ros::NodeHandle &nh);
+        void init();
 
-        ~ROGMap() = default;
+        ~ROGMap() override = default;
 
-
-        bool isLineFree(const Vec3f &start_pt, const Vec3f &end_pt,
-                        const double &max_dis = 999999,
-                        const vec_Vec3i &neighbor_list = vec_Vec3i{}) const;
-
-        bool isLineFree(const Vec3f &start_pt, const Vec3f &end_pt,
-                        Vec3f &free_local_goal, const double &max_dis = 999999,
-                        const vec_Vec3i &neighbor_list = vec_Vec3i{}) const;
-
-        bool isLineFree(const Vec3f &start_pt, const Vec3f &end_pt,
-                        const bool & use_inf_map = false,
-                        const bool & use_unk_as_occ = false) const;
+        rog_map::Config getMapConfig() const {
+            return cfg_;
+        }
 
 
-        void updateMap(const PointCloud &cloud, const Pose &pose);
+        bool isLineFree(const Vec3f& start_pt, const Vec3f& end_pt,
+                        const double& max_dis = 999999,
+                        const vec_Vec3i& neighbor_list = vec_Vec3i{}) const;
+
+        bool isLineFree(const Vec3f& start_pt, const Vec3f& end_pt,
+                        Vec3f& free_local_goal, const double& max_dis = 999999,
+                        const vec_Vec3i& neighbor_list = vec_Vec3i{}) const;
+
+        bool isLineFree(const Vec3f& start_pt, const Vec3f& end_pt,
+                        const bool& use_inf_map = false,
+                        const bool& use_unk_as_occ = false) const;
+
+        bool getNearestCellIs(const GridType& target_type,
+                                const Vec3f& start_pos,
+                                Vec3f& nearest_pt, const double& max_dis) const {
+            return findNearestCellThat(IS, target_type, start_pos, nearest_pt, max_dis);
+        }
+
+        bool getNearestCellNot(const GridType& target_type,
+                             const Vec3f& start_pos,
+                             Vec3f& nearest_pt, const double& max_dis) const {
+            return findNearestCellThat(NOT, target_type, start_pos, nearest_pt, max_dis);
+        }
+
+        bool getNearestInfCellIs(const GridType& target_type,
+                           const Vec3f& start_pos,
+                           Vec3f& nearest_pt, const double& max_dis) const {
+            return findNearestInfCellThat(IS, target_type, start_pos, nearest_pt, max_dis);
+        }
+
+        bool getNearestInfCellNot(const GridType& target_type,
+                             const Vec3f& start_pos,
+                             Vec3f& nearest_pt, const double& max_dis) const {
+            return findNearestInfCellThat(NOT, target_type, start_pos, nearest_pt, max_dis);
+        }
+
+        void probMapPosToGlobalIndex(const Vec3f & pos, Vec3i & id_g) const {
+            this->posToGlobalIndex(pos, id_g);
+        }
+
+        void probMapGlobalIndexToPos(const Vec3i & id_g, Vec3f & pos) const {
+            this->globalIndexToPos(id_g, pos);
+        }
+
+        void infMapPosToGlobalIndex(const Vec3f & pos, Vec3i & id_g) const {
+            inf_map_->infMapPosToGlobalIndex(pos, id_g);
+        }
+
+        void infMapGlobalIndexToPos(const Vec3i & id_g, Vec3f & pos) const {
+            inf_map_->infMapGlobalIndexToPos(id_g, pos);
+        }
+
+
+        void updateMap(const PointCloud& cloud, const Pose& pose);
 
         RobotState getRobotState() const;
 
-    private:
-        ros::NodeHandle nh_;
-
-        RobotState robot_state_;
-
-        struct ROSCallback {
-            ros::Subscriber odom_sub, cloud_sub;
-            int unfinished_frame_cnt{0};
-            Pose pc_pose;
-            PointCloud pc;
-            ros::Timer update_timer;
-            mutex updete_lock;
-        } rc_;
-
-        struct VisualizeMap {
-            ros::Publisher occ_pub, unknown_pub,
-                    occ_inf_pub, unknown_inf_pub,
-                    mkr_arr_pub, frontier_pub,
-                    esdf_pub, esdf_neg_pub, esdf_occ_pub;
-            visualization_msgs::MarkerArray mkr_arr;
-            ros::Timer viz_timer;
-            struct VizCfg {
-                dynamic_reconfigure::Server<rog_map::VizConfig> vizcfgserver;
-                dynamic_reconfigure::Server<rog_map::VizConfig>::CallbackType callback_func;
-                bool use_body_center{false};
-                Vec3f box_min, box_max;
-            } vizcfg;
-        } vm_;
+    protected:
 
         std::ofstream time_log_file_, map_info_log_file_;
 
-        void updateRobotState(const Pose &pose);
+        void updateRobotState(const Pose& pose);
 
-        void odomCallback(const nav_msgs::OdometryConstPtr &odom_msg);
+        bool findNearestCellThat(const bool & is, const GridType& target_type,
+            const Vec3f & start_pos, Vec3f& nearest_pt, const double & max_dis) const ;
 
-        void cloudCallback(const sensor_msgs::PointCloud2ConstPtr &cloud_msg);
+        bool findNearestInfCellThat(const bool & is, const GridType& target_type,
+          const Vec3f & start_pos, Vec3f& nearest_pt, const double & max_dis) const ;
 
-        void updateCallback(const ros::TimerEvent &event);
-
-        static void vecEVec3fToPC2(const vec_E<Vec3f> &points, sensor_msgs::PointCloud2 &cloud);
-
-        void vizCallback(const ros::TimerEvent &event);
-
-        void VizCfgCallback(rog_map::VizConfig &config, uint32_t level);
-
+        RobotState robot_state_;
     };
 }

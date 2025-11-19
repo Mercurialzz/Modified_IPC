@@ -1,34 +1,31 @@
-import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-# 读取CSV文件
-data = pd.read_csv('rm_performance_log.csv')
+# 设置字体参数
+plt.rcParams['pdf.fonttype'] = 42
+plt.rcParams['ps.fonttype'] = 42
 
-# 获取列标签
-columns = data.columns.tolist()
+# 读取数据
+df = pd.read_csv("./rm_performance_log.csv")
 
-# 删除第一行（包含标签）
-data = data.iloc[1:]
+index = df.columns[1:]  # 获取列名（去除第一列TIME_STAMPE）
+f, ax = plt.subplots()
+f.set_figheight(4)
+f.set_figwidth(18)
 
-# 将数据转换为数值类型
-data = data.astype(float)
+all_data = []
 
-# 创建一个包含列数个子图的图表
-fig, axes = plt.subplots(nrows=1, ncols=len(columns), figsize=(3 * len(columns), 3))
+for i in index:
+    all_data.append(df[i])
+    print(i, ":", np.average(df[i]) * 1000, " ms")
 
-# 绘制每一列的箱线图，并设置ylim
-for i, column in enumerate(columns):
-    ax = axes[i]
-    ax.boxplot(data[column])
-    ax.set_xlabel(column)
-    if i < 4:
-        ax.set_ylim([data[columns[:4]].min().min(), data[columns[:4]].max().max()])
+# 绘制箱型图，并隐藏异常值
+plt.boxplot(all_data, showfliers=False)
 
-# 设置整体标题
-fig.suptitle('Box Plot of Columns')
-plt.subplots_adjust(wspace=1.5)
-# 调整子图之间的间距
-plt.tight_layout()
+# 设置横轴的标签
+plt.xticks(ticks=np.arange(1, len(index) + 1), labels=index)
 
-# 显示图表
+plt.ylabel("Time Consuming")
+plt.xlabel("Data Labels")  # 可选：添加横轴名称
 plt.show()

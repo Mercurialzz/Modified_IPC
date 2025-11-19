@@ -28,6 +28,7 @@
 #include <rog_map/rog_map_core/sliding_map.h>
 
 namespace rog_map {
+    using namespace color_text;
 
     class FreeCntMap : public SlidingMap {
     public:
@@ -53,7 +54,7 @@ namespace rog_map {
 
 
         void resetLocalMap() override {
-            std::cout << RED << " -- [Fro-Map] Clear all local map."<<RESET << std::endl;
+            std::cout << YELLOW << " -- [Fro-Map] Clear all local map."<<RESET << std::endl;
             std::fill(neighbor_free_cnt.begin(), neighbor_free_cnt.end(), 0);
         }
 

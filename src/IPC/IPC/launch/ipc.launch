@@ -16,6 +16,8 @@
         <remap from="~goal"         to="/goal"/>
 
         <rosparam command="load" file="$(find ipc)/config/param.yaml"/>
+        <!-- 指定 ROGMap 使用的配置文件(这里使用同一个 param.yaml 中的 rog_map: 块) -->
+        <param name="rog_map_config_path" value="$(find ipc)/config/param.yaml" type="string" />
 
     </node>
 

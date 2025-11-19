@@ -1,9 +1,10 @@
 #include "planner.h"
 #include <uav_utils/converters.h>
-#include "../include/polytope/emvp.hpp"
+// #include "../include/polytope/emvp.hpp"
 #include <Eigen/Core>
 
 using namespace std;
+#include <sfc_core/ciri.h>
 using namespace uav_utils;
 
 #define BACKWARD_HAS_DW 1
@@ -57,6 +58,21 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     local_astar_ = std::make_shared<LoaclAstarClass>();
     local_astar_->InitMap(resolution_, map_low, map_upp);
 
+    // 初始化 ROGMap - 从 ROS 参数服务器读取配置文件路径
+    std::string rog_map_config_path;
+    if (!nh.getParam("rog_map_config_path", rog_map_config_path)) {
+        // 如果参数不存在,使用默认路径
+        ROS_ERROR("rog_map_config_path parameter not found");
+    } else {
+        ROS_INFO("ROGMap config path from launch file: %s", rog_map_config_path.c_str());
+    }
+    
+    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, rog_map_config_path);
+    ROS_INFO("ROGMap initialized successfully.");
+
+    // 初始化 CorridorGenerator,传入 ROGMap 实例
+    CorridorInit(param); 
+
     std::string file = ros::package::getPath("ipc") + "/config";
     write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
     log_times_.resize(5, 1);
@@ -67,6 +83,40 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     rc_dy_data.reset();
 }
 
+void PlannerClass::CorridorInit(Parameter_t &param)
+{
+    // 初始化 CorridorGenerator,传入 ROGMap 实例
+    // 使用参数文件中的 corridor 配置
+    const auto &rog_map_cfg = map_ptr_->getMapConfig();
+
+    corridor_gen_ = std::make_shared<CorridorGenerator>(
+        map_ptr_,  // 传入 ROGMap 实例
+        param.corridor_bound_dis, 
+        param.corridor_seed_line_max_dis, 
+        rog_map_cfg.resolution,
+        rog_map_cfg.virtual_ground_height, 
+        rog_map_cfg.virtual_ceil_height, 
+        param.corridor_robot_r, 
+        param.corridor_obs_skip_num, 
+        param.corridor_iris_iter_num);
+
+    int step = ceil(param.corridor_robot_r / rog_map_cfg.resolution);
+        for (int x = -step; x <= step; x++) {
+            for (int y = -step; y <= step; y++) {
+                for (int z = -step; z <= step; z++) {
+                    if (x * x + y * y + z * z <= step * step) {
+                        param.seed_line_neighbour.push_back({x, y, z});
+                    }
+                }
+            }
+        }
+        std::sort(param.seed_line_neighbour.begin(), param.seed_line_neighbour.end(),
+                    [](const auto& a, const auto& b) {
+                        return a[0] * a[0] + a[1] * a[1] + a[2] * a[2] < b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+                    });
+
+        corridor_gen_->SetLineNeighborList(param.seed_line_neighbour);
+}
 
 void PlannerClass::StateUpdate(void)
 {
@@ -654,7 +704,7 @@ Desired_State_t PlannerClass::get_takeoff_land_des(const double speed)
 void PlannerClass::set_hov_with_odom()
 {
     hover_pose.head<3>() = odom_data.p;
-    hover_pose(3) = get_yaw_from_quaternion(odom_data.q);
+    hover_pose(3) = uav_utils::get_yaw_from_quaternion(odom_data.q);
 
     last_set_hover_pose_time = ros::Time::now();
 }
@@ -687,7 +737,7 @@ void PlannerClass::set_hov_with_rc()
 void PlannerClass::set_start_pose_for_takeoff_land(const Odom_Data_t &odom)
 {
     takeoff_land.start_pose.head<3>() = odom_data.p;
-    takeoff_land.start_pose(3) = get_yaw_from_quaternion(odom_data.q);
+    takeoff_land.start_pose(3) = uav_utils::get_yaw_from_quaternion(odom_data.q);
 
     takeoff_land.toggle_takeoff_land_time = ros::Time::now();
 }
@@ -1097,6 +1147,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
     }
     
+    
     ros::Time df_start = ros::Time::now();
     estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备
@@ -1265,46 +1316,32 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
 }
 void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
 {
-    planes.resize(0, 4);
-    ros::Time start_t = ros::Time::now();
-    Eigen::Vector3d box_max = box_max_;
-    Eigen::Vector3d box_min = box_min_;
-
-    Eigen::Matrix<double, 6, 4> bd;
-    bd.setZero();
-    bd(0, 0) = 1.0;
-    bd(1, 0) = -1.0;
-    bd(2, 1) = 1.0;
-    bd(3, 1) = -1.0;
-    bd(4, 2) = 1.0;
-    bd(5, 2) = -1.0;
-    bd(0, 3) = -p1.x()-box_max.x();
-    bd(1, 3) =  p1.x()+box_min.x();
-    bd(2, 3) = -p1.y()-box_max.y();
-    bd(3, 3) =  p1.y()+box_min.y();
-    bd(4, 3) = -box_max.z();
-    bd(5, 3) = +box_min.z();
-
-    Polytope p;
-    if (local_pc_.empty()) { // 障碍物点云为空，直接返回一个方块
-        planes.resize(6, 4); // Ax + By + Cz + D = 0
+    // 使用 CorridorGenerator 的 GeneratePolytopeFromLine 方法
+    super_utils::Line seed_line = std::make_pair(
+        super_utils::Vec3f(p1.x(), p1.y(), p1.z()),
+        super_utils::Vec3f(p2.x(), p2.y(), p2.z())
+    );
+    
+    geometry_utils::Polytope polytope;
+    bool success = corridor_gen_->GeneratePolytopeFromLine(seed_line, polytope);
+    
+    if (success) {
+        planes = polytope.GetPlanes();
+    } else {
+        // 失败时返回轴对齐边界盒（与原逻辑一致）
+        ROS_WARN_THROTTLE(1.0, "[Planner] GeneratePolytopeFromLine failed, returning axis-aligned bounding box");
+        
+        Eigen::Vector3d box_max = box_max_;
+        Eigen::Vector3d box_min = box_min_;
+        
+        // 生成轴对齐的边界盒：Ax + By + Cz + D = 0
+        planes.resize(6, 4);
         planes.row(0) <<  1,  0,  0, -p1.x()-box_max.x();
         planes.row(1) <<  0,  1,  0, -p1.y()-box_max.y();
         planes.row(2) <<  0,  0,  1, -box_max.z();
         planes.row(3) << -1,  0,  0,  p1.x()+box_min.x();
         planes.row(4) <<  0, -1,  0,  p1.y()+box_min.y();
         planes.row(5) <<  0,  0, -1,  box_min.z();
-        return ; 
-    }
-    Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(local_pc_[0].data(), 3, local_pc_.size());
-
-    bool success = emvp::emvp(bd, pp, p1, p2, p, sfc_dis_, false, 1);
-    if (success) {
-        if (index == 0) p.Visualize(sfc_pub_, "emvp", true);
-        p.Visualize(sfc_pub_, "emvp", false);
-        planes = p.GetPlanes();
-    } else {
-        p.Reset();
     }
 }
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
@@ -1519,6 +1556,28 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     vf.filter(static_map_);
     for(auto &point: static_map_.points) {
         local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
+    }
+
+    // 更新 ROGMap（用于 CorridorGenerator 查询）
+    if (map_ptr_) {
+        // 将 PCL 点云转换为 ROGMap 的 PointCloud 格式
+        rog_map::PointCloud rog_cloud;
+        rog_cloud.resize(cloud.size());
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            rog_cloud[i].x = cloud[i].x;
+            rog_cloud[i].y = cloud[i].y;
+            rog_cloud[i].z = cloud[i].z;
+            rog_cloud[i].intensity = 0.0f;
+        }
+        
+        // 构造位姿信息
+        rog_map::Pose pose = std::make_pair(
+            rog_map::Vec3f(odom_data.p.x(), odom_data.p.y(), odom_data.p.z()),
+            rog_map::Quatf(odom_data.q.w(), odom_data.q.x(), odom_data.q.y(), odom_data.q.z())
+        );
+        
+        // 更新地图
+        map_ptr_->updateMap(rog_cloud, pose);
     }
 
     // update astar map

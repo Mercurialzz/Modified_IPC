@@ -48,6 +48,13 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "fsm/ref_dis", ref_dis);
 	read_essential_param(nh, "fsm/path_dis", path_dis);
 
+	// Corridor generation parameters
+	read_essential_param(nh, "corridor/corridor_bound_dis", corridor_bound_dis);
+	read_essential_param(nh, "corridor/corridor_line_max_length", corridor_seed_line_max_dis);
+	read_essential_param(nh, "corridor/robot_r", corridor_robot_r);
+	read_essential_param(nh, "corridor/obs_skip_num", corridor_obs_skip_num);
+	read_essential_param(nh, "corridor/iris_iter_num", corridor_iris_iter_num);
+
 	read_essential_param(nh, "msg_timeout/odom", msg_timeout.odom);
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);
 	read_essential_param(nh, "msg_timeout/cmd", msg_timeout.cmd);

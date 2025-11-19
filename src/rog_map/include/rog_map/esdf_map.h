@@ -24,8 +24,6 @@
 #pragma once
 
 #include <rog_map/rog_map_core/counter_map.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <visualization_msgs/MarkerArray.h>
 
 //#define ESDF_MAP_DEBUG
 
@@ -48,9 +46,6 @@ namespace rog_map {
                 const Vec3f &fix_map_origin,
                 const double &unk_thresh);
 
-
-
-
         void getUpdatedBbox(Vec3f & box_min,Vec3f & box_max)const;
 
         void resetLocalMap() override;
@@ -63,29 +58,17 @@ namespace rog_map {
 
         void resetOneCell(const int & hash_id) override;
 
-
         void evaluateEDT(const Eigen::Vector3d& pos, double& dist);
+
         void evaluateFirstGrad(const Eigen::Vector3d& pos, Eigen::Vector3d& grad);
+
         void evaluateSecondGrad(const Eigen::Vector3d& pos, Eigen::Vector3d& grad);
-        void visEDTGrad(const Vec3f &box_min_d,
-                        const Vec3f &box_max_d,
-                        const double &visualize_z,
-                        visualization_msgs::MarkerArray &mk_arr);
 
-        /*Only for visualize */
-        void getESDFOccPC2(const Vec3f &box_min_d,
-                           const Vec3f &box_max_d,
-                           sensor_msgs::PointCloud2 &pc2);
+        void getPositiveESDFPointCloud(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
+                                     const double &visualize_z, pcl::PointCloud<pcl::PointXYZI> & pcl_pc);
 
-        void getPositiveESDFPC2(const Vec3f &box_min_d,
-                                const Vec3f &box_max_d,
-                                const double &visualize_z,
-                                sensor_msgs::PointCloud2 &pc2);
-
-        void getNegativeESDFPC2(const Vec3f &box_min_d,
-                                const Vec3f &box_max_d,
-                                const double &visualize_z,
-                                sensor_msgs::PointCloud2 &pc2) ;
+        void getNegativeESDFPointCloud(const rog_map::Vec3f &box_min_d, const rog_map::Vec3f &box_max_d,
+                                     const double &visualize_z, pcl::PointCloud<pcl::PointXYZI> & pcl_pc);
 
     private:
 
@@ -99,7 +82,7 @@ namespace rog_map {
         vector<double> tmp_buffer1_, tmp_buffer2_;
         Vec3i half_local_update_box_i_;
         Vec3i update_local_map_min_i_, update_local_map_max_i_;
-        pcl::PointCloud<pcl::PointXYZI> pcl_pc;
+
         std::mutex update_esdf_mtx;
 
 

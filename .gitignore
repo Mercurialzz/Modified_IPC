@@ -7,4 +7,5 @@ Third_Party/
 *.bag
 *.tum
 .catkin_workspace
+super_planner
 

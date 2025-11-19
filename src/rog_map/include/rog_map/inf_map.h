@@ -30,8 +30,10 @@ namespace rog_map {
     class InfMap : public CounterMap {
     public:
         typedef std::shared_ptr<InfMap> Ptr;
-        InfMap(rog_map::Config &cfg);
-        ~InfMap() = default;
+
+        explicit InfMap(rog_map::Config &cfg);
+
+        ~InfMap() override = default;
 
 
         double getResolution()const {
@@ -52,6 +54,10 @@ namespace rog_map {
                        const GridType &gt, vec_E<Vec3f> &out_points) const;
 
         void resetLocalMap() override;
+
+        void infMapPosToGlobalIndex(const Vec3f &pos, Vec3i &id) const;
+
+        void infMapGlobalIndexToPos(const Vec3i &id_g, Vec3f &pos) const;
 
         GridType getGridType(const Vec3f &pos) const;
 

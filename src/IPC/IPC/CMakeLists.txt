@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_BUILD_TYPE "Release")
 # set(CMAKE_BUILD_TYPE "Debug")
 
+# 定义 ROGMap 所需的宏
+add_definitions(-DUSE_ROS1)
+add_definitions(-DORIGIN_AT_CORNER)
+add_definitions(-DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 
@@ -34,15 +39,19 @@ generate_dynamic_reconfigure_options(
 )
 
 catkin_package(
-
+        INCLUDE_DIRS
+        # CATKIN_DEPENDS roscpp rospy std_msgs
+        #  DEPENDS system_lib
 )
 
 include_directories(
+  SYSTEM
   include 
   include/${PROJECT_NAME}
   ${catkin_INCLUDE_DIRS}
   ${Eigen3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${CATKIN_DEVEL_PREFIX}/include 
 )
 
 add_executable(ipc_node
@@ -53,6 +62,16 @@ add_executable(ipc_node
   include/astar.cpp
   include/mpc.cpp
   include/local_astar.cpp
+  src/sfc_core/ciri.cpp
+  src/sfc_core/corridor_generator.cpp
+  src/utils/polytope.cpp
+  src/utils/ellipsoid.cpp
+  src/utils/mvie.cpp
+  src/utils/quickhull.cpp
+  src/utils/geometry_utils.cpp
+  src/utils/optimization_utils.cpp
+  src/utils/sdlp.cpp
+  src/utils/lbfgs.cpp
 )
 add_dependencies(ipc_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(ipc_node

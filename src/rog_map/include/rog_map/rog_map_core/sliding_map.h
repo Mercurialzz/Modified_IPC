@@ -24,7 +24,7 @@
 #pragma once
 
 #include <rog_map/rog_map_core/config.hpp>
-#include <utils/scope_timer.hpp>
+#include <super_utils/scope_timer.hpp>
 
 namespace rog_map {
     /// The policy of ORIGIN_AT_CORNER is:
@@ -50,6 +50,8 @@ namespace rog_map {
 
         SlidingMap() = default;
 
+        virtual ~SlidingMap() = default;
+
         void initSlidingMap(const Vec3i &half_map_size_i,
                   const double &resolution,
                   const bool &map_sliding_en,
@@ -66,9 +68,9 @@ namespace rog_map {
 
     protected:
         struct SlidingConfig {
-            double resolution{0.0};
-            double resolution_inv{0.0};
-            double sliding_thresh{0.0};
+            double resolution{0};
+            double resolution_inv{0};
+            double sliding_thresh{0};
             bool map_sliding_en{false};
             Vec3f fix_map_origin{};
             Vec3i visualization_range_i{};
@@ -76,6 +78,7 @@ namespace rog_map {
             Vec3i half_map_size_i{};
             int virtual_ceil_height_id_g{0};
             int virtual_ground_height_id_g{0};
+            int safe_margin_i{0};
             int map_vox_num{0};
         } sc_;
 

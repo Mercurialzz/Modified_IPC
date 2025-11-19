@@ -23,26 +23,27 @@
 
 #include <rog_map/prob_map.h>
 using namespace rog_map;
+using namespace super_utils;
 
 void ProbMap::initProbMap() {
     static bool init_once{false};
-    if(init_once) {
+    if (init_once) {
         throw std::runtime_error(" -- [ROGMap] ProbMap can only init once.");
     }
     init_once = true;
     initSlidingMap(cfg_.half_map_size_i, cfg_.resolution,
-                                                      cfg_.map_sliding_en, cfg_.map_sliding_thresh,
-                                                      cfg_.fix_map_origin);
+                   cfg_.map_sliding_en, cfg_.map_sliding_thresh,
+                   cfg_.fix_map_origin);
     time_consuming_.resize(7);
     inf_map_ = std::make_shared<InfMap>(cfg_);
 
 
     if (cfg_.frontier_extraction_en) {
         fcnt_map_ = std::make_shared<FreeCntMap>(cfg_.half_map_size_i + Vec3i::Constant(2),
-                                       cfg_.resolution,
-                                       cfg_.map_sliding_en,
-                                       cfg_.map_sliding_thresh,
-                                       cfg_.fix_map_origin);
+                                                 cfg_.resolution,
+                                                 cfg_.map_sliding_en,
+                                                 cfg_.map_sliding_thresh,
+                                                 cfg_.fix_map_origin);
     }
 
     if (cfg_.esdf_en) {
@@ -65,9 +66,12 @@ void ProbMap::initProbMap() {
     cfg_.virtual_ceil_height = sc_.virtual_ceil_height_id_g * cfg_.resolution;
     cfg_.virtual_ground_height = sc_.virtual_ground_height_id_g * cfg_.resolution;
 
+    cout<<"[ProbMap] virtual_ceil_height: "<<cfg_.virtual_ceil_height<<endl;
+    cout<< "[ProbMap] virtual_ground_height: "<<cfg_.virtual_ground_height<<endl;
+
     if (!cfg_.map_sliding_en) {
-        cout << YELLOW << " -- [ProbMap] Map sliding disabled, set origin to [" << cfg_.fix_map_origin.transpose()
-            << "] -- " << RESET << endl;
+        std::cout << YELLOW << " -- [ProbMap] Map sliding disabled, set origin to [" << cfg_.fix_map_origin.transpose()
+            << "] -- " << RESET << std::endl;
         slideAllMap(cfg_.fix_map_origin);
     }
 
@@ -82,7 +86,7 @@ void ProbMap::initProbMap() {
 
     resetLocalMap();
 
-    cout << GREEN << " -- [ProbMap] Init successfully -- ." << RESET << endl;
+    std::cout << GREEN << " -- [ProbMap] Init successfully -- ." << RESET << std::endl;
     printMapInformation();
 }
 
@@ -156,7 +160,7 @@ bool ProbMap::isOccupied(const Vec3i& id_g) const {
         return false;
     }
     if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g ) {
+        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
         return true;
     }
     return isOccupied(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -167,7 +171,7 @@ bool ProbMap::isUnknown(const Vec3i& id_g) const {
         return true;
     }
     if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g ) {
+        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
         return false;
     }
     return isUnknown(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -178,7 +182,7 @@ bool ProbMap::isKnownFree(const Vec3i& id_g) const {
         return false;
     }
     if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g ) {
+        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
         return true;
     }
     return isKnownFree(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -190,7 +194,7 @@ bool ProbMap::isFrontier(const Vec3i& id_g) const {
         return false;
     }
     if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g ) {
+        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
         return false;
     }
 
@@ -224,30 +228,30 @@ void ProbMap::writeTimeConsumingToLog(std::ofstream& log_file) {
         if (i != time_consuming_.size() - 1)
             log_file << ", ";
     }
-    log_file << endl;
+    log_file << std::endl;
 }
 
 void ProbMap::writeMapInfoToLog(std::ofstream& log_file) {
-    log_file << "[ProbMap]" << endl;
-    log_file << "\tmap_size_d: " << cfg_.map_size_d.transpose() << endl;
-    log_file << "\tresolution: " << cfg_.resolution << endl;
-    log_file << "\tmap_size_i: " << sc_.map_size_i.transpose() << endl;
-    log_file << "\tlocal_update_box_size: " << cfg_.local_update_box_d.transpose() << endl;
-    log_file << "\tp_min: " << cfg_.p_min << endl;
-    log_file << "\tp_max: " << cfg_.p_max << endl;
-    log_file << "\tp_hit: " << cfg_.p_hit << endl;
-    log_file << "\tp_miss: " << cfg_.p_miss << endl;
-    log_file << "\tp_occ: " << cfg_.p_occ << endl;
-    log_file << "\tp_free: " << cfg_.p_free << endl;
-    log_file << "\tunk_thresh: " << cfg_.unk_thresh << endl;
-    log_file << "\tmap_sliding_thresh: " << cfg_.map_sliding_thresh << endl;
-    log_file << "\tmap_sliding_en: " << cfg_.map_sliding_en << endl;
-    log_file << "\tfix_map_origin: " << cfg_.fix_map_origin.transpose() << endl;
-    log_file << "\tvisualization_range: " << cfg_.visualization_range.transpose() << endl;
-    log_file << "\tvirtual_ceil_height: " << cfg_.virtual_ceil_height << endl;
-    log_file << "\tvirtual_ground_height: " << cfg_.virtual_ground_height << endl;
-    log_file << "\tbatch_update_size: " << cfg_.batch_update_size << endl;
-    log_file << "\tfrontier_extraction_en: " << cfg_.frontier_extraction_en << endl;
+    log_file << "[ProbMap]" << std::endl;
+    log_file << "\tmap_size_d: " << cfg_.map_size_d.transpose() << std::endl;
+    log_file << "\tresolution: " << cfg_.resolution << std::endl;
+    log_file << "\tmap_size_i: " << sc_.map_size_i.transpose() << std::endl;
+    log_file << "\tlocal_update_box_size: " << cfg_.local_update_box_d.transpose() << std::endl;
+    log_file << "\tp_min: " << cfg_.p_min << std::endl;
+    log_file << "\tp_max: " << cfg_.p_max << std::endl;
+    log_file << "\tp_hit: " << cfg_.p_hit << std::endl;
+    log_file << "\tp_miss: " << cfg_.p_miss << std::endl;
+    log_file << "\tp_occ: " << cfg_.p_occ << std::endl;
+    log_file << "\tp_free: " << cfg_.p_free << std::endl;
+    log_file << "\tunk_thresh: " << cfg_.unk_thresh << std::endl;
+    log_file << "\tmap_sliding_thresh: " << cfg_.map_sliding_thresh << std::endl;
+    log_file << "\tmap_sliding_en: " << cfg_.map_sliding_en << std::endl;
+    log_file << "\tfix_map_origin: " << cfg_.fix_map_origin.transpose() << std::endl;
+    log_file << "\tvisualization_range: " << cfg_.visualization_range.transpose() << std::endl;
+    log_file << "\tvirtual_ceil_height: " << cfg_.virtual_ceil_height << std::endl;
+    log_file << "\tvirtual_ground_height: " << cfg_.virtual_ground_height << std::endl;
+    log_file << "\tbatch_update_size: " << cfg_.batch_update_size << std::endl;
+    log_file << "\tfrontier_extraction_en: " << cfg_.frontier_extraction_en << std::endl;
     inf_map_->writeMapInfoToLog(log_file);
 }
 
@@ -282,8 +286,10 @@ void ProbMap::updateOccPointCloud(const PointCloud& input_cloud) {
             localmap_min = localmap_min.cwiseMin(p);
         }
     }
-    local_map_bound_min_d_ = localmap_min;
-    local_map_bound_max_d_ = localmap_max;
+    if(cfg_.map_sliding_en) {
+        local_map_bound_max_d_ = localmap_max;
+        local_map_bound_min_d_ = localmap_min;
+    }
     probabilisticMapFromCache();
     map_empty_ = false;
 }
@@ -304,26 +310,27 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     const Vec3f& pos = pose.first;
     time_consuming_[4] = cloud.size();
     if (cfg_.map_sliding_en && !insideLocalMap(pos) && raycast_data_.batch_update_counter == 0) {
-        cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << endl;
-        cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << endl;
+        std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
+        std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << std::endl;
         slideAllMap(pos);
         return;
     }
 
     if (pos.z() > cfg_.virtual_ceil_height) {
-        cout << RED << " -- [ROGMapCore] Odom above virtual ceil, please check map parameter -- ." << RESET
-            << endl;
+        std::cout << YELLOW << " -- [ROGMapCore] Odom above virtual ceil, please check map parameter -- ." << RESET
+            << std::endl;
         return;
     }
     else if (pos.z() < cfg_.virtual_ground_height) {
-        cout << RED << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
-            << endl;
+        std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
+            << std::endl;
         return;
     }
 
-    if (raycast_data_.batch_update_counter == 0
-        && (map_empty_ ||
-            (cfg_.map_sliding_en && (pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh))) {
+    if (raycast_data_.batch_update_counter == 0 &&
+        cfg_.map_sliding_en  &&
+        (map_empty_ || (pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh)
+        ) {
         slideAllMap(pos);
     }
 
@@ -369,11 +376,11 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
 
 GridType ProbMap::getGridType(Vec3i& id_g) const {
     if (id_g.z() <= sc_.virtual_ground_height_id_g ||
-        id_g.z() >= sc_.virtual_ceil_height_id_g) {
-        return OCCUPIED;
+        id_g.z() >= sc_.virtual_ceil_height_id_g - sc_.safe_margin_i) {
+        return super_utils::OCCUPIED;
     }
     if (!insideLocalMap(id_g)) {
-        return OUT_OF_MAP;
+        return super_utils::OUT_OF_MAP;
     }
     Vec3i id_l;
     globalIndexToLocalIndex(id_g, id_l);
@@ -404,6 +411,10 @@ GridType ProbMap::getGridType(const Vec3f& pos) const {
 }
 
 GridType ProbMap::getInfGridType(const Vec3f& pos) const {
+    // NOTE, we consider, if the pos is not inside prob map, it is also out of inf map.
+    if(!insideLocalMap(pos)) {
+        return OUT_OF_MAP;
+    }
     return inf_map_->getGridType(pos);
 }
 
@@ -418,17 +429,17 @@ void
 ProbMap::boxSearch(const Vec3f& _box_min, const Vec3f& _box_max, const GridType& gt, vec_E<Vec3f>& out_points) const {
     out_points.clear();
     if (map_empty_) {
-        cout << YELLOW << " -- [ROG] Map is empty, cannot perform box search." << RESET << endl;
+        std::cout << YELLOW << " -- [ROG] Map is empty, cannot perform box search." << RESET << std::endl;
         return;
     }
     if ((_box_max - _box_min).minCoeff() <= 0) {
-        cout << YELLOW << " -- [ROG] Box search failed, box size is zero." << RESET << endl;
+        std::cout << YELLOW << " -- [ROG] Box search failed, box size is zero." << RESET << std::endl;
         return;
     }
     Vec3f box_min_d = _box_min, box_max_d = _box_max;
     boundBoxByLocalMap(box_min_d, box_max_d);
     if ((box_max_d - box_min_d).minCoeff() <= 0) {
-        cout << YELLOW << " -- [ROG] Box search failed, box size is zero." << RESET << endl;
+        std::cout << YELLOW << " -- [ROG] Box search failed, box size is zero." << RESET << std::endl;
         return;
     }
     Vec3i box_min_id_g, box_max_id_g;
@@ -493,7 +504,7 @@ void ProbMap::boxSearchInflate(const Vec3f& box_min, const Vec3f& box_max, const
 void ProbMap::boundBoxByLocalMap(Vec3f& box_min, Vec3f& box_max) const {
     if ((box_max - box_min).minCoeff() <= 0) {
         box_min = box_max;
-        cout << RED << "-- [ROG] Bound box is invalid." << RESET << endl;
+        std::cout << YELLOW << "-- [ROG] Bound box is invalid." << RESET << std::endl;
         return;
     }
 
@@ -695,7 +706,11 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
 
         // no raycasting, purely add occ pints
         if (!cfg_.raycasting_en) {
-            if(insideLocalMap(p)) {
+            if (insideLocalMap(p)) {
+                double sqrdis = (p - cur_odom).squaredNorm();
+                if(sqrdis<cfg_.sqr_raycast_range_min){
+                    continue;
+                }
                 posToGlobalIndex(p, pt_id_g);
                 insertUpdateCandidate(pt_id_g, true);
                 // record cache box size;
@@ -707,13 +722,14 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
 
         bool update_hit{true};
         // 1.3) filter for virtual ceil and ground
-        if (p.z() > cfg_.virtual_ceil_height ) {
+        if (p.z() > cfg_.virtual_ceil_height) {
             update_hit = false;
             // find the intersect point with the ceil
             const double dz = p.z() - cur_odom.z();
             const double pc = cfg_.virtual_ceil_height - cur_odom.z();
             p = cur_odom + (p - cur_odom).normalized() * pc / dz;
-        }else if (p.z() < cfg_.virtual_ground_height) {
+        }
+        else if (p.z() < cfg_.virtual_ground_height) {
             update_hit = false;
             // find the intersect point with the ground
             const double dz = p.z() - cur_odom.z();
@@ -728,6 +744,10 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             double k = cfg_.raycast_range_max / sqrt(sqr_dis);
             p = k * (p - cur_odom) + cur_odom;
             update_hit = false;
+        }
+
+        if(sqr_dis < cfg_.sqr_raycast_range_min) {
+            continue;
         }
 
         // local map bound
@@ -754,7 +774,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         }
     }
 
-    if(cfg_.raycasting_en) {
+    if (cfg_.raycasting_en) {
         // 4) process all inf points, updae free probability
         for (const auto& p : raycasting_cloud) {
             Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
@@ -770,7 +790,6 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             }
         }
     }
-
 }
 
 void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
@@ -816,9 +835,10 @@ void ProbMap::updateLocalBox(const Vec3f& cur_odom) {
 }
 
 void ProbMap::resetLocalMap() {
-    std::cout << RED << " -- [Prob-Map] Clear all local map." << RESET << std::endl;
+    std::cout << YELLOW << " -- [Prob-Map] Clear all local map." << RESET << std::endl;
+    double unk_value = (cfg_.l_free + cfg_.l_occ)/2.0;
     // Clear local map
-    std::fill(occupancy_buffer_.begin(), occupancy_buffer_.end(), 0);
+    std::fill(occupancy_buffer_.begin(), occupancy_buffer_.end(), unk_value);
     while (!raycast_data_.update_cache_id_g.empty()) {
         raycast_data_.update_cache_id_g.pop();
     }

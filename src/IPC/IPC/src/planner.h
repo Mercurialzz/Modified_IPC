@@ -27,6 +27,8 @@
 #include "../include/astar.h"
 #include "../include/mpc.h"
 #include "../include/local_astar.h"
+#include "sfc_core/corridor_generator.h"
+#include <rog_map_ros/rog_map_ros1.hpp>
 
 #include "input.h"
 #include "param.h"
@@ -205,8 +207,10 @@ private:
     pcl::PointCloud<pcl::PointXYZ> static_map_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
 
+    std::shared_ptr<rog_map::ROGMapROS> map_ptr_;
     std::shared_ptr<LoaclAstarClass> local_astar_;
     std::shared_ptr<MPCPlannerClass> mpc_;
+    std::shared_ptr<CorridorGenerator> corridor_gen_;
 
 	// ---- control related ----
 	Desired_State_t get_hover_des();
@@ -254,6 +258,7 @@ private:
 	void CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r);
 	void MPCPathPublish(std::vector<Eigen::Vector3d> &pt);
 	void StateUpdate(void);
+	void CorridorInit(Parameter_t &param);
 };
 
 #endif

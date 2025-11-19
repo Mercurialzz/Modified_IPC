@@ -28,9 +28,12 @@
 #include <rog_map/inf_map.h>
 #include <rog_map/free_cnt_map.h>
 #include <rog_map/esdf_map.h>
-#include <utils/raycaster.h>
+#include <rog_map/rog_map_core/raycaster.h>
+
 
 namespace rog_map {
+    using super_utils::Pose;
+
 
     class ProbMap : public SlidingMap {
     public:
@@ -38,7 +41,8 @@ namespace rog_map {
         typedef std::shared_ptr<ProbMap> Ptr;
 
         ProbMap() = default;
-        ~ProbMap() = default;
+
+        ~ProbMap() override = default;
 
         void initProbMap();
 
