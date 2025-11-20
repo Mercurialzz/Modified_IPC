@@ -66,6 +66,8 @@ void ProbMap::initProbMap() {
     cfg_.virtual_ceil_height = sc_.virtual_ceil_height_id_g * cfg_.resolution;
     cfg_.virtual_ground_height = sc_.virtual_ground_height_id_g * cfg_.resolution;
 
+    cout<<"[ProbMap] virtual_ground_height_id_g: "<<sc_.virtual_ground_height_id_g<<endl;
+    cout<<"[ProbMap] resolution: "<<cfg_.resolution<<endl;
     cout<<"[ProbMap] virtual_ceil_height: "<<cfg_.virtual_ceil_height<<endl;
     cout<< "[ProbMap] virtual_ground_height: "<<cfg_.virtual_ground_height<<endl;
 
@@ -322,6 +324,7 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
         return;
     }
     else if (pos.z() < cfg_.virtual_ground_height) {
+        // std::cout << YELLOW << "POS" << pos.transpose() << "GROUND_HEIGHT"<< cfg_.virtual_ground_height << RESET<<std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
             << std::endl;
         return;

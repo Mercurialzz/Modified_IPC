@@ -32,6 +32,7 @@
 
 #include "input.h"
 #include "param.h"
+#include "sfc_core/corridor_vis.h"
 
 // #include "ThrustCurve.h"
 
@@ -237,7 +238,8 @@ private:
     }
 	void PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des);
     void GeneratePolyOnPath();
-    void GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
+    void GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
+	void GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
 	void set_hov_with_odom();
 	void set_hov_with_rc();
 	void MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u);
@@ -259,6 +261,7 @@ private:
 	void MPCPathPublish(std::vector<Eigen::Vector3d> &pt);
 	void StateUpdate(void);
 	void CorridorInit(Parameter_t &param);
+	void visualization_sfc(const Polytope &sfc);
 };
 
 #endif

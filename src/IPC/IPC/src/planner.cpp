@@ -1,10 +1,9 @@
 #include "planner.h"
 #include <uav_utils/converters.h>
-// #include "../include/polytope/emvp.hpp"
 #include <Eigen/Core>
+#include <sfc_core/ciri.h>
 
 using namespace std;
-#include <sfc_core/ciri.h>
 using namespace uav_utils;
 
 #define BACKWARD_HAS_DW 1
@@ -110,12 +109,12 @@ void PlannerClass::CorridorInit(Parameter_t &param)
                 }
             }
         }
-        std::sort(param.seed_line_neighbour.begin(), param.seed_line_neighbour.end(),
-                    [](const auto& a, const auto& b) {
-                        return a[0] * a[0] + a[1] * a[1] + a[2] * a[2] < b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
-                    });
+    std::sort(param.seed_line_neighbour.begin(), param.seed_line_neighbour.end(),
+                [](const auto& a, const auto& b) {
+                    return a[0] * a[0] + a[1] * a[1] + a[2] * a[2] < b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+                });
 
-        corridor_gen_->SetLineNeighborList(param.seed_line_neighbour);
+    corridor_gen_->SetLineNeighborList(param.seed_line_neighbour);
 }
 
 void PlannerClass::StateUpdate(void)
@@ -546,6 +545,11 @@ void PlannerClass::process()
         ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
         MpcCalculate(odom_data, imu_data, u);
     }
+
+    Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
+    // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
+    Eigen::Vector3d next_pt = Eigen::Vector3d(odom_data.p.x() + 0.5f, odom_data.p.y() , odom_data.p.z());
+    GenerateAPolytopeFromLine(odom_data.p,next_pt,planes, 0);
 
     ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
     // STEP4: publish control commands to mavros
@@ -1314,34 +1318,42 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
     local_astar_->Reset(); // 重置A*内部缓存（占据、开闭集等），避免下次重用旧状态
     // std::cout << "astar reset time is: " << (ros::Time::now() - now).toSec()*1000 << " ms. " << std::endl;
 }
-void PlannerClass::GenerateAPolytope(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
+void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
 {
     // 使用 CorridorGenerator 的 GeneratePolytopeFromLine 方法
     super_utils::Line seed_line = std::make_pair(
         super_utils::Vec3f(p1.x(), p1.y(), p1.z()),
-        super_utils::Vec3f(p2.x(), p2.y(), p2.z())
+        super_utils::Vec3f(p2.x(), p2.y(), p2.z())  
     );
     
     geometry_utils::Polytope polytope;
     bool success = corridor_gen_->GeneratePolytopeFromLine(seed_line, polytope);
     
     if (success) {
+        if(index == 0) visualization_sfc(polytope);
         planes = polytope.GetPlanes();
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
         ROS_WARN_THROTTLE(1.0, "[Planner] GeneratePolytopeFromLine failed, returning axis-aligned bounding box");
-        
-        Eigen::Vector3d box_max = box_max_;
-        Eigen::Vector3d box_min = box_min_;
-        
-        // 生成轴对齐的边界盒：Ax + By + Cz + D = 0
-        planes.resize(6, 4);
-        planes.row(0) <<  1,  0,  0, -p1.x()-box_max.x();
-        planes.row(1) <<  0,  1,  0, -p1.y()-box_max.y();
-        planes.row(2) <<  0,  0,  1, -box_max.z();
-        planes.row(3) << -1,  0,  0,  p1.x()+box_min.x();
-        planes.row(4) <<  0, -1,  0,  p1.y()+box_min.y();
-        planes.row(5) <<  0,  0, -1,  box_min.z();
+    }
+}
+
+void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
+{
+    // 使用 CorridorGenerator 的 GeneratePolytopeFromPoint 方法
+    // 使用GeneratePolytopeFromPoint
+    super_utils::Vec3f point = super_utils::Vec3f(pos.x(), pos.y(), pos.z());
+    
+    geometry_utils::Polytope polytope;
+    bool success = corridor_gen_->GeneratePolytopeFromPoint(point, polytope);
+    
+    if (success) {
+        ROS_INFO_THROTTLE(1.0, "[Planner] GeneratePolytopeFromPoint succeeded.");
+        if(index == 0) visualization_sfc(polytope);
+        planes = polytope.GetPlanes();
+    } else {
+        // 失败时返回轴对齐边界盒（与原逻辑一致）
+        ROS_WARN_THROTTLE(1.0, "[Planner] GeneratePolytopeFromLine failed, returning axis-aligned bounding box");
     }
 }
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
@@ -1386,14 +1398,14 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             // 接近路径终点：在当前位置生成SFC
             goal_in_sfc = follow_path_.size();
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
-            GenerateAPolytope(odom.p, odom.p, planes, 0);
+            GenerateAPolytopeFromPoint(odom.p, planes, 0);
             for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
                 mpc_->SetFSC(planes, i);  // 为整个MPC预测地平线设置相同SFC
             }
         } else { 
             // 正常路径跟踪：寻找最大最长的SFC
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes, last_planes;
-            GenerateAPolytope(follow_path_[astar_index_], follow_path_[astar_index_], planes, 0); 
+            GenerateAPolytopeFromLine(follow_path_[astar_index_], follow_path_[astar_index_], planes, 0); 
             last_planes = planes;
             int init_num = 0;
             
@@ -1440,7 +1452,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 
                 // 生成长距离SFC
                 Eigen::Matrix<double, Eigen::Dynamic, 4> long_planes;
-                GenerateAPolytope(follow_path_[first_id], follow_path_[i], long_planes, 1);
+                GenerateAPolytopeFromLine(follow_path_[first_id], follow_path_[i], long_planes, 1);
                 if (long_planes.rows() > 0) {
                     // 为MPC后段步骤设置长SFC
                     for (int j = mpc_goal_index+1; j < mpc_->MPC_HORIZON; j++) {
@@ -1527,7 +1539,18 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     }
     log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
+void PlannerClass::visualization_sfc(const Polytope &sfc) {
+    const auto &rog_map_cfg = map_ptr_->getMapConfig();
 
+    CodridorVis::deleteAllMarkerArray(sfc_pub_);
+    visualization_msgs::MarkerArray mkr_arr;
+    CodridorVis::addPolytopeToMarkerArray(mkr_arr, sfc, "sfc", false, Color::Chartreuse(),
+                                        Color::Green(),
+                                        Color::Green(),
+                                        0.15,
+                                        rog_map_cfg.resolution / 2);
+    sfc_pub_.publish(mkr_arr);
+}
 //sub topic
 void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
 {
@@ -1556,28 +1579,6 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     vf.filter(static_map_);
     for(auto &point: static_map_.points) {
         local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
-    }
-
-    // 更新 ROGMap（用于 CorridorGenerator 查询）
-    if (map_ptr_) {
-        // 将 PCL 点云转换为 ROGMap 的 PointCloud 格式
-        rog_map::PointCloud rog_cloud;
-        rog_cloud.resize(cloud.size());
-        for (size_t i = 0; i < cloud.size(); ++i) {
-            rog_cloud[i].x = cloud[i].x;
-            rog_cloud[i].y = cloud[i].y;
-            rog_cloud[i].z = cloud[i].z;
-            rog_cloud[i].intensity = 0.0f;
-        }
-        
-        // 构造位姿信息
-        rog_map::Pose pose = std::make_pair(
-            rog_map::Vec3f(odom_data.p.x(), odom_data.p.y(), odom_data.p.z()),
-            rog_map::Quatf(odom_data.q.w(), odom_data.q.x(), odom_data.q.y(), odom_data.q.z())
-        );
-        
-        // 更新地图
-        map_ptr_->updateMap(rog_cloud, pose);
     }
 
     // update astar map

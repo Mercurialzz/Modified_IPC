@@ -260,7 +260,6 @@ bool CorridorGenerator::GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &pol
         polytope.Reset();
         return false;
     }
-
 }
 
 bool CorridorGenerator::GenerateEmptyPolytope(const super_utils::Vec3f &pt,

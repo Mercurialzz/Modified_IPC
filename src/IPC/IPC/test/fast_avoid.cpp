@@ -51,7 +51,7 @@ void OdomCallback(const nav_msgs::OdometryConstPtr& msg)
 void GoalPathPublish(void)
 {
     // nav_msgs::Path msg;
-    // msg.header.frame_id = "world";
+    // msg.header.frame_id = "map";
     // msg.header.stamp = ros::Time::now();
     // geometry_msgs::PoseStamped point;
     // point.pose.position.x = 0.0;
@@ -65,7 +65,7 @@ void GoalPathPublish(void)
     // goal_pub.publish(msg);
     
     geometry_msgs::PoseStamped msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
     msg.pose.position.x = 10.0;
     msg.pose.position.y = 0.0;
@@ -98,13 +98,13 @@ void LocalPCPublish(bool flag)
 
     sensor_msgs::PointCloud2 msg;
     pcl::toROSMsg(pub_cloud, msg);
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
     local_pc_pub.publish(msg);
 
     sensor_msgs::PointCloud2 msg2;
     pcl::toROSMsg(cloud, msg2);
-    msg2.header.frame_id = "world";
+    msg2.header.frame_id = "map";
     msg2.header.stamp = ros::Time::now();
     if (flag) obs_pub.publish(msg2);
 }
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
     map_cloud_1.is_dense = true;
     sensor_msgs::PointCloud2 msg;
     pcl::toROSMsg(map_cloud_1, msg);
-    msg.header.frame_id = "world";
+    msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
     map_pub.publish(msg);
 
@@ -175,7 +175,7 @@ int main(int argc, char **argv)
     }
     sensor_msgs::PointCloud2 msg2;
     pcl::toROSMsg(obs_cloud, msg2);
-    msg2.header.frame_id = "world";
+    msg2.header.frame_id = "map";
     msg2.header.stamp = ros::Time::now();
     obs_pub.publish(msg2);
 

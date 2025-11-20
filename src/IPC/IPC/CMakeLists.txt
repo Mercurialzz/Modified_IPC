@@ -8,7 +8,7 @@ set(CMAKE_BUILD_TYPE "Release")
 # 定义 ROGMap 所需的宏
 add_definitions(-DUSE_ROS1)
 add_definitions(-DORIGIN_AT_CORNER)
-add_definitions(-DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)

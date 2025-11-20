@@ -68,8 +68,8 @@ fsm: #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离
   path_dis:    0.02  #路径稠密化的插值间距 5cm
 
 corridor:  # 走廊生成参数
-  corridor_bound_dis:       3
-  corridor_line_max_length: 3
+  corridor_bound_dis:       10.0
+  corridor_line_max_length: 1.2
   robot_r:                  0.3    # 机器人半径（米），用于 z 轴收缩
   iris_iter_num:            2
   obs_skip_num:             2
@@ -115,14 +115,14 @@ mpc:
 
 
 rog_map:
-  resolution: 0.3
+  resolution: 0.1
   inflation_resolution: 0.3
   inflation_step: 2
   unk_inflation_en: false
   unk_inflation_step: 1
-  map_size: [ 15, 110,6 ]
+  map_size: [ 200, 200,6 ]
   # If the map rolling is disable, the map origin [m] should be set.
-  fix_map_origin: [ 0,0,1.5 ]
+  fix_map_origin: [ 0,0,1.0 ]
   frontier_extraction_en: false
 
   # Virtual ceil and ground
@@ -147,7 +147,7 @@ rog_map:
   ros_callback:
     enable: true
     cloud_topic: "/cloud_registered"
-    odom_topic: "/lidar_slam/odom"
+    odom_topic: "/mavros/local_position/odom"
     odom_timeout: 2.0
 
 
@@ -160,8 +160,8 @@ rog_map:
     # The frame rate of visualization [Hz], if set to 0, the visualization will not be triggered by frame.
     frame_rate: 0
     # visualization range along the odom [m].
-    range: [ 15, 15,4 ]
-    frame_id: "world"
+    range: [ 50, 50,4 ]
+    frame_id: "map"
     pub_unknown_map_en: false
 
   # Intensity filter for input point cloud. If the point intensity is less than this value,
