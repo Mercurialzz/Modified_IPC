@@ -53,6 +53,7 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     }    
     thr2acc_ = 9.81 / thrust_;
 
+    
     mpc_   = std::make_shared<MPCPlannerClass>(nh);
     local_astar_ = std::make_shared<LoaclAstarClass>();
     local_astar_->InitMap(resolution_, map_low, map_upp);
@@ -68,8 +69,11 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     
     map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, rog_map_config_path);
     ROS_INFO("ROGMap initialized successfully.");
-
+    vis_ptr_ = std::make_shared<vis_interface::VisInterface>(nh);
     // 初始化 CorridorGenerator,传入 ROGMap 实例
+    //TODO: 看是否需要用config文件把参数导入还是直接用param导入
+    vis_ptr_->setResolution(resolution_);
+    vis_ptr_->setVisualizationEn(1);//这里要改
     CorridorInit(param); 
 
     std::string file = ros::package::getPath("ipc") + "/config";
@@ -89,6 +93,7 @@ void PlannerClass::CorridorInit(Parameter_t &param)
     const auto &rog_map_cfg = map_ptr_->getMapConfig();
 
     corridor_gen_ = std::make_shared<CorridorGenerator>(
+        vis_ptr_,
         map_ptr_,  // 传入 ROGMap 实例
         param.corridor_bound_dis, 
         param.corridor_seed_line_max_dis, 
@@ -546,10 +551,10 @@ void PlannerClass::process()
         MpcCalculate(odom_data, imu_data, u);
     }
 
-    Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
-    // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
-    Eigen::Vector3d next_pt = Eigen::Vector3d(odom_data.p.x() + 0.5f, odom_data.p.y() , odom_data.p.z());
-    GenerateAPolytopeFromLine(odom_data.p,next_pt,planes, 0);
+    // Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
+    // // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
+    // Eigen::Vector3d next_pt = Eigen::Vector3d(odom_data.p.x() + 0.5f, odom_data.p.y() , odom_data.p.z());
+    // GenerateAPolytopeFromLine(odom_data.p,next_pt,planes, 0);
 
     ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
     // STEP4: publish control commands to mavros
@@ -1330,7 +1335,7 @@ void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d
     bool success = corridor_gen_->GeneratePolytopeFromLine(seed_line, polytope);
     
     if (success) {
-        if(index == 0) visualization_sfc(polytope);
+        if(index == 0) vis_ptr_->vizCurSfc(polytope);
         planes = polytope.GetPlanes();
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
@@ -1349,7 +1354,7 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
     
     if (success) {
         ROS_INFO_THROTTLE(1.0, "[Planner] GeneratePolytopeFromPoint succeeded.");
-        if(index == 0) visualization_sfc(polytope);
+        if(index == 0) vis_ptr_->vizCurSfc(polytope);
         planes = polytope.GetPlanes();
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
@@ -1539,76 +1544,65 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     }
     log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
-void PlannerClass::visualization_sfc(const Polytope &sfc) {
-    const auto &rog_map_cfg = map_ptr_->getMapConfig();
 
-    CodridorVis::deleteAllMarkerArray(sfc_pub_);
-    visualization_msgs::MarkerArray mkr_arr;
-    CodridorVis::addPolytopeToMarkerArray(mkr_arr, sfc, "sfc", false, Color::Chartreuse(),
-                                        Color::Green(),
-                                        Color::Green(),
-                                        0.15,
-                                        rog_map_cfg.resolution / 2);
-    sfc_pub_.publish(mkr_arr);
-}
-//sub topic
-void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
-{
-    local_pc_mutex_.lock();
+// //sub topic
+// void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
+// {
+//     local_pc_mutex_.lock();
 
-    ros::Time now = ros::Time::now();
-    local_pc_.clear();
-    pcl::PointCloud<pcl::PointXYZ> cloud;
-    pcl::fromROSMsg(*msg, cloud);
+//     ros::Time now = ros::Time::now();
+//     local_pc_.clear();
+//     pcl::PointCloud<pcl::PointXYZ> cloud;
+//     pcl::fromROSMsg(*msg, cloud);
 
-    vec_cloud_.push_back(cloud);
-    if (vec_cloud_.size() > 10) vec_cloud_.pop_front();
-    static_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
-    for (int i = 0; i < vec_cloud_.size(); i++) *static_cloud_ += vec_cloud_[i];
+//     vec_cloud_.push_back(cloud);
+//     if (vec_cloud_.size() > 10) vec_cloud_.pop_front();
+//     static_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
+//     for (int i = 0; i < vec_cloud_.size(); i++) *static_cloud_ += vec_cloud_[i];
     
-    pcl::CropBox<pcl::PointXYZ> cb; // CropBox filter (delete unuseful points)
-    cb.setMin(Eigen::Vector4f(odom_data.p.x() - (map_upp_.x()-0.5), odom_data.p.y() - (map_upp_.y()-0.5), 0.2, 1.0));
-    cb.setMax(Eigen::Vector4f(odom_data.p.x() + (map_upp_.x()-0.5), odom_data.p.y() + (map_upp_.y()-0.5), map_upp_.z(), 1.0));
-    cb.setInputCloud(static_cloud_);
-    cb.filter(*static_cloud_);
-    pcl::VoxelGrid<pcl::PointXYZ> vf;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cur_cloud_ds(new pcl::PointCloud<pcl::PointXYZ>());
-    Eigen::Vector3f pos = odom_data.p.cast<float>();
-    vf.setLeafSize(0.2, 0.2, 0.2);
-    vf.setInputCloud(static_cloud_);
-    vf.filter(static_map_);
-    for(auto &point: static_map_.points) {
-        local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
-    }
+//     pcl::CropBox<pcl::PointXYZ> cb; // CropBox filter (delete unuseful points)
+//     cb.setMin(Eigen::Vector4f(odom_data.p.x() - (map_upp_.x()-0.5), odom_data.p.y() - (map_upp_.y()-0.5), 0.2, 1.0));
+//     cb.setMax(Eigen::Vector4f(odom_data.p.x() + (map_upp_.x()-0.5), odom_data.p.y() + (map_upp_.y()-0.5), map_upp_.z(), 1.0));
+//     cb.setInputCloud(static_cloud_);
+//     cb.filter(*static_cloud_);
+//     pcl::VoxelGrid<pcl::PointXYZ> vf;
+//     pcl::PointCloud<pcl::PointXYZ>::Ptr cur_cloud_ds(new pcl::PointCloud<pcl::PointXYZ>());
+//     Eigen::Vector3f pos = odom_data.p.cast<float>();
+//     vf.setLeafSize(0.2, 0.2, 0.2);
+//     vf.setInputCloud(static_cloud_);
+//     vf.filter(static_map_);
+//     for(auto &point: static_map_.points) {
+//         local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
+//     }
 
-    // update astar map
-    static int obs_count = 0;
-    local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
-    local_astar_->setObsVector(local_pc_, expand_fix_);
-    std::vector<Eigen::Vector3d> remain_path;
-    remain_path.insert(remain_path.begin(), follow_path_.begin()+astar_index_, follow_path_.end());
-    if (local_astar_->CheckPathFree(remain_path) == false) replan_flag_ = true;
-    // bool flag = local_astar_->CheckPathFree(follow_path_);     // check path is free or not
-    // if (flag == false) obs_count++;
-    // else obs_count = 0;
-    // if (obs_count >= 2) {
-    //     obs_count = 0;
-    //     replan_flag_ = true;
-    // }
+//     // update astar map
+//     static int obs_count = 0;
+//     local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
+//     local_astar_->setObsVector(local_pc_, expand_fix_);
+//     std::vector<Eigen::Vector3d> remain_path;
+//     remain_path.insert(remain_path.begin(), follow_path_.begin()+astar_index_, follow_path_.end());
+//     if (local_astar_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+//     // bool flag = local_astar_->CheckPathFree(follow_path_);     // check path is free or not
+//     // if (flag == false) obs_count++;
+//     // else obs_count = 0;
+//     // if (obs_count >= 2) {
+//     //     obs_count = 0;
+//     //     replan_flag_ = true;
+//     // }
     
-    local_astar_->GetOccupyPcl(cloud);
-    cloud.width = cloud.points.size();
-    cloud.height = 1;
-    cloud.is_dense = true;
-    sensor_msgs::PointCloud2 map_msg;
-    pcl::toROSMsg(cloud, map_msg);
-    map_msg.header.frame_id = "map";
-    gird_map_pub_.publish(map_msg);
+//     local_astar_->GetOccupyPcl(cloud);
+//     cloud.width = cloud.points.size();
+//     cloud.height = 1;
+//     cloud.is_dense = true;
+//     sensor_msgs::PointCloud2 map_msg;
+//     pcl::toROSMsg(cloud, map_msg);
+//     map_msg.header.frame_id = "map";
+//     gird_map_pub_.publish(map_msg);
 
-    log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
+//     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
 
-    local_pc_mutex_.unlock();
-}
+//     local_pc_mutex_.unlock();
+// }
 
 void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw)
 {

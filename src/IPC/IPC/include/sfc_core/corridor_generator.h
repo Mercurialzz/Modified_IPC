@@ -34,7 +34,7 @@
 #include <sfc_core/trajectory.h>
 
 #include <utils/header/fmt_eigen.hpp>
-
+#include <vis_interface/vis_interface.hpp>
 // #include <ros_interface/ros_interface.hpp>
 
 
@@ -49,7 +49,7 @@ using super_utils::OCCUPIED;
 
 class CorridorGenerator {
     private:
-        // ros_interface::RosInterface::Ptr ros_ptr_;
+        vis_interface::VisInterface::Ptr vis_ptr_;
         double bound_dis_;
         double seed_line_max_length_;
         double min_overlap_threshold_;
@@ -75,7 +75,8 @@ class CorridorGenerator {
             return out;
         }
 
-        CorridorGenerator(const std::shared_ptr<rog_map::ROGMap> & map_ptr,
+        CorridorGenerator(const vis_interface::VisInterface::Ptr &vis_ptr,  
+                          const std::shared_ptr<rog_map::ROGMap> & map_ptr,
                           const double bound_dis,
                           const double seed_line_max_dis,
                           const double min_overlap_threshold,

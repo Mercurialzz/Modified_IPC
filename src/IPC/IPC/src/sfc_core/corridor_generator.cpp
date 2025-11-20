@@ -27,12 +27,13 @@
 
 using namespace super_utils;
 
-CorridorGenerator::CorridorGenerator(const std::shared_ptr<rog_map::ROGMap> &map_ptr, const double bound_dis,
+CorridorGenerator::CorridorGenerator(const vis_interface::VisInterface::Ptr &vis_ptr,  
+                                     const std::shared_ptr<rog_map::ROGMap> &map_ptr, const double bound_dis,
                                      const double seed_line_max_dis, const double min_overlap_threshold,
                                      const double virtual_groud_height, const double virtual_ceil_height,
                                      const double robot_r, const int box_search_skip_num, const int iris_iter_num)
-        : map_ptr_(map_ptr) {
-    ciri_ = std::make_shared<CIRI>();
+        : vis_ptr_(vis_ptr), map_ptr_(map_ptr) {
+    ciri_ = std::make_shared<CIRI>(vis_ptr_);
     ciri_->setupParams(robot_r, iris_iter_num);
     bound_dis_ = bound_dis;
     seed_line_max_length_ = seed_line_max_dis;
@@ -118,40 +119,42 @@ sfcs.clear();
         }
 
 // viz for debug
-//            ros_ptr_->vizCiriPolytope(temp_poly, "debug");
+//            vis_ptr_->vizCiriPolytope(temp_poly, "debug");
 //            usleep(10000);
 
-        if (!sfcs.empty()) {
-            overlap = sfcs.back().CrossWith(temp_poly);
-            interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
-            temp_poly.overlap_depth_with_last_one = interior_depth;
-            temp_poly.interior_pt_with_last_one = interior_pt;
-            if (interior_depth < min_overlap_threshold_) {
-                if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p)) {
-                    cout << YELLOW << " -- [SUPER] GeneratePolytopeFromPoint failed." << RESET << endl;
-                    return false;
-                }
-                overlap = sfcs.back().CrossWith(temp_poly_fix_p);
-                interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
-                if (interior_depth <= 0.01) {
-                    ROS_WARN_STREAM(" -- [SUPER] Cannot find continuous corridor on path, overlap only "
-                                    << interior_depth << ", force return.");
-// viz for debug
-//                        ros_ptr_->vizCiriPointCloud(latest_pc);
-//                        usleep(100000);
-//                        exit(-1);
-                    return false;
-                }
-                temp_poly_fix_p.overlap_depth_with_last_one = interior_depth;
-                temp_poly_fix_p.interior_pt_with_last_one = interior_pt;
-                sfcs.push_back(temp_poly_fix_p);
+            if (!sfcs.empty()) {
                 overlap = sfcs.back().CrossWith(temp_poly);
                 interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
-                if (interior_depth <= 0.01) {
-                    ROS_WARN_STREAM(" -- [SUPER] Cannot find continuous corridor on path, overlap only "
-                                    << interior_depth << ", force return.");
-                    // viz for debug
-//                        ros_ptr_->vizCiriPointCloud(latest_pc);
+                temp_poly.overlap_depth_with_last_one = interior_depth;
+                temp_poly.interior_pt_with_last_one = interior_pt;
+                if (interior_depth < min_overlap_threshold_) {
+                    if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p)) {
+                        cout << YELLOW << " -- [SUPER] GeneratePolytopeFromPoint failed." << RESET << endl;
+                        return false;
+                    }
+                    overlap = sfcs.back().CrossWith(temp_poly_fix_p);
+                    interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                    if (interior_depth <= 0.01) {
+                        vis_ptr_->warn(
+                                " -- [SUPER] Cannot find continuous corridor on path, overlap only {}, force return.",
+                                interior_depth);
+// viz for debug
+//                        vis_ptr_->vizCiriPointCloud(latest_pc);
+//                        usleep(100000);
+//                        exit(-1);
+                        return false;
+                    }
+                    temp_poly_fix_p.overlap_depth_with_last_one = interior_depth;
+                    temp_poly_fix_p.interior_pt_with_last_one = interior_pt;
+                    sfcs.push_back(temp_poly_fix_p);
+                    overlap = sfcs.back().CrossWith(temp_poly);
+                    interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                    if (interior_depth <= 0.01) {
+                        vis_ptr_->warn(
+                                " -- [SUPER] Cannot find continuous corridor on path, overlap only {}, force return.",
+                                interior_depth);
+                        // viz for debug
+//                        vis_ptr_->vizCiriPointCloud(latest_pc);
 //                        usleep(100000);
 //                        exit(-1);
                     return false;

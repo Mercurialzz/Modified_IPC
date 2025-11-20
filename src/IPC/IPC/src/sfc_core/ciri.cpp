@@ -101,9 +101,13 @@ RET_CODE CIRI::comvexDecomposition(const Eigen::MatrixX4d& bd, const Eigen::Matr
     //                        infeasible_problem = true;
                             infeasible_pt_w = pt_w;
                             cout<<YELLOW<<" -- [CIRI] WARNING! The problem is not feasible, the min dis to obstacle is only: "<<dis<<RESET<<endl;
-                            vizCiriInfeasiblePoint(infeasible_pt_w);
-                            vizCiriSeedLine(a, b, robot_r_);
+
                             return FAILED;
+                        cout<<" -- [CIRI] dis: "<<dis<<endl;
+                        cout<<" -- [CIRI] robot_r: "<<robot_r_<<endl;
+                        cout<<" -- [CIRI] pcMin: "<<pt_w.transpose()<<endl;
+                        cout<<" -- [CIRI] a: "<<a.transpose()<<endl;
+                        cout<<" -- [CIRI] b: "<<b.transpose()<<endl;
                         }
 
                 if (robot_r_ < epsilon_) {
@@ -206,25 +210,25 @@ RET_CODE CIRI::comvexDecomposition(const Eigen::MatrixX4d& bd, const Eigen::Matr
         }
     }
 
-    if (std::isnan(hPoly.sum())) {
-        cout << YELLOW << " -- [CIRI] ERROR! There is nan in generated planes." << RESET << endl;
-        cout << a.transpose() << endl;
-        cout << b.transpose() << endl;
-        vizCiriSeedLine(a, b, robot_r_);
-        vizCiriEllipsoid(E);
-        return FAILED;
-    }
-    Vec3f inner;
-    if (!geometry_utils::findInterior(hPoly, inner)) {
-        cout<<RED<<" -- [CIRI] The polytope is empty."<<RESET<<endl;
-        vizCiriSeedLine(a, b, robot_r_);
-        vizCiriEllipsoid(E);
-        return FAILED;
-    }
-    optimized_polytope_.Reset();
-    optimized_polytope_.SetPlanes(hPoly);
-    optimized_polytope_.SetSeedLine(std::make_pair(a, b));
-    optimized_polytope_.SetEllipsoid(E);
+        if (std::isnan(hPoly.sum())) {
+            cout << YELLOW << " -- [CIRI] ERROR! There is nan in generated planes." << RESET << endl;
+            cout << a.transpose() << endl;
+            cout << b.transpose() << endl;
+            vis_ptr_->vizCiriSeedLine(a, b,robot_r_);
+            vis_ptr_->vizCiriEllipsoid(E);
+            return FAILED;
+        }
+        Vec3f inner;
+        if (!geometry_utils::findInterior(hPoly, inner)) {
+            cout<<RED<<" -- [CIRI] The polytope is empty."<<RESET<<endl;
+            vis_ptr_->vizCiriSeedLine(a, b,robot_r_);
+            vis_ptr_->vizCiriEllipsoid(E);
+            return FAILED;
+        }
+        optimized_polytope_.Reset();
+        optimized_polytope_.SetPlanes(hPoly);
+        optimized_polytope_.SetSeedLine(std::make_pair(a, b));
+        optimized_polytope_.SetEllipsoid(E);
 
     return SUCCESS;
 }
@@ -400,82 +404,4 @@ void CIRI::findEllipsoid(const Eigen::Matrix3Xd& pc,
     }
     E = Ellipsoid(Rf, r, center);
     out_ell = E;
-}
-void CIRI::initVizIfNeeded() {
-    if(viz_inited_) return;
-    if(!ros::isInitialized()) {
-        ROS_WARN_THROTTLE(5.0, "[CIRI] ROS not initialized, skip visualization.");
-        return;
-    }
-    ros::NodeHandle nh;
-    ciri_marker_pub_ = nh.advertise<visualization_msgs::Marker>("visualization/ciri_debug", 10);
-    viz_inited_ = true;
-}
-
-void CIRI::vizCiriSeedLine(const Eigen::Vector3d& a, const Eigen::Vector3d& b, double robot_r) {
-    initVizIfNeeded();
-    if(!viz_inited_) return;
-    visualization_msgs::Marker m;
-    m.header.frame_id = "map";
-    m.header.stamp = ros::Time::now();
-    m.ns = "ciri";
-    m.id = 0;
-    m.type = visualization_msgs::Marker::LINE_LIST;
-    m.action = visualization_msgs::Marker::ADD;
-    m.scale.x = std::max(0.01, robot_r * 0.2);
-    m.color.r = 0.2f; m.color.g = 0.9f; m.color.b = 0.2f; m.color.a = 1.0f;
-    geometry_msgs::Point pa, pb;
-    pa.x = a.x(); pa.y = a.y(); pa.z = a.z();
-    pb.x = b.x(); pb.y = b.y(); pb.z = b.z();
-    m.points.push_back(pa);
-    m.points.push_back(pb);
-    ciri_marker_pub_.publish(m);
-}
-
-void CIRI::vizCiriInfeasiblePoint(const Eigen::Vector3d& p) {
-    initVizIfNeeded();
-    if(!viz_inited_) return;
-    visualization_msgs::Marker m;
-    m.header.frame_id = "map";
-    m.header.stamp = ros::Time::now();
-    m.ns = "ciri";
-    m.id = 1;
-    m.type = visualization_msgs::Marker::SPHERE;
-    m.action = visualization_msgs::Marker::ADD;
-    m.scale.x = m.scale.y = m.scale.z = std::max(0.02, robot_r_ * 0.3);
-    m.color.r = 1.0f; m.color.g = 0.1f; m.color.b = 0.1f; m.color.a = 0.9f;
-    m.pose.position.x = p.x();
-    m.pose.position.y = p.y();
-    m.pose.position.z = p.z();
-    ciri_marker_pub_.publish(m);
-}
-
-void CIRI::vizCiriEllipsoid(const Ellipsoid& E) {
-    initVizIfNeeded();
-    if(!viz_inited_) return;
-    visualization_msgs::Marker m;
-    m.header.frame_id = "map";
-    m.header.stamp = ros::Time::now();
-    m.ns = "ciri";
-    m.id = 2;
-    m.type = visualization_msgs::Marker::SPHERE;
-    m.action = visualization_msgs::Marker::ADD;
-    // 使用 Ellipsoid 的旋转和平移、半轴进行可视化
-    const Eigen::Matrix3d R = E.R();
-    const Eigen::Vector3d r = E.r();
-    m.scale.x = std::max(1e-3, r.x() * 2);
-    m.scale.y = std::max(1e-3, r.y() * 2);
-    m.scale.z = std::max(1e-3, r.z() * 2);
-    m.color.r = 0.2f; m.color.g = 0.4f; m.color.b = 1.0f; m.color.a = 0.4f;
-    // 位置
-    m.pose.position.x = E.d().x();
-    m.pose.position.y = E.d().y();
-    m.pose.position.z = E.d().z();
-    // 仅旋转可视化，若需要可从 E.C() 转四元数
-    Eigen::Quaterniond q(R);
-    m.pose.orientation.w = q.w();
-    m.pose.orientation.x = q.x();
-    m.pose.orientation.y = q.y();
-    m.pose.orientation.z = q.z();
-    ciri_marker_pub_.publish(m);
 }

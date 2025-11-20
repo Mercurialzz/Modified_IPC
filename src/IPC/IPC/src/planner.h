@@ -29,10 +29,10 @@
 #include "../include/local_astar.h"
 #include "sfc_core/corridor_generator.h"
 #include <rog_map_ros/rog_map_ros1.hpp>
-
+#include <vis_interface/vis_interface.hpp>
 #include "input.h"
 #include "param.h"
-#include "sfc_core/corridor_vis.h"
+
 
 // #include "ThrustCurve.h"
 
@@ -120,7 +120,7 @@ public:
     ros::Publisher trajectory_pub;
     ros::Publisher vision_pub;
 	//planner visualization
-	ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, sfc_pub_, mpc_path_pub_, goal_pub_;
+	ros::Publisher  gird_map_pub_, astar_pub_, cmd_pub_, mpc_path_pub_, goal_pub_;
 
 
     ros::ServiceClient set_FCU_mode_srv;
@@ -212,6 +212,8 @@ private:
     std::shared_ptr<LoaclAstarClass> local_astar_;
     std::shared_ptr<MPCPlannerClass> mpc_;
     std::shared_ptr<CorridorGenerator> corridor_gen_;
+	std::shared_ptr<vis_interface::VisInterface> vis_ptr_;
+
 
 	// ---- control related ----
 	Desired_State_t get_hover_des();
@@ -261,7 +263,6 @@ private:
 	void MPCPathPublish(std::vector<Eigen::Vector3d> &pt);
 	void StateUpdate(void);
 	void CorridorInit(Parameter_t &param);
-	void visualization_sfc(const Polytope &sfc);
 };
 
 #endif

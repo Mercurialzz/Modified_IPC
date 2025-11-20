@@ -77,19 +77,18 @@ int main(int argc, char** argv)
                                                   boost::bind(&Goal_Data_t::feed, &planner.goal_data, _1),
                                                   ros::VoidConstPtr(),
                                                   ros::TransportHints().tcpNoDelay());
-    ros::Subscriber point_cloud_sub =
-        nh.subscribe<sensor_msgs::PointCloud2>("local_pc",
-                                               10,
-                                               boost::bind(&PlannerClass::LocalPcCallback, &planner, _1),
-                                               ros::VoidConstPtr(),
-                                               ros::TransportHints().tcpNoDelay());
+    // ros::Subscriber point_cloud_sub =
+    //     nh.subscribe<sensor_msgs::PointCloud2>("local_pc",
+    //                                            10,
+    //                                            boost::bind(&PlannerClass::LocalPcCallback, &planner, _1),
+    //                                            ros::VoidConstPtr(),
+    //                                            ros::TransportHints().tcpNoDelay());
 
     // ros topic pub
     planner.astar_pub_ = nh.advertise<visualization_msgs::Marker>("astar_path", 1);
     planner.gird_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("grid_map", 1);
     planner.cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("cmd", 1);
     planner.mpc_path_pub_ = nh.advertise<nav_msgs::Path>("mpc_path", 1);
-    planner.sfc_pub_ = nh.advertise<visualization_msgs::MarkerArray>("sfc", 1);
     planner.ctrl_FCU_pub = nh.advertise<mavros_msgs::AttitudeTarget>("px4ctrl", 10);
     planner.goal_pub_ = nh.advertise<geometry_msgs::PoseStamped>("goal_pub", 1);
     // ros topic service                                     

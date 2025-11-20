@@ -49,7 +49,7 @@
 #include <memory>
 
 #include <ros/ros.h>
-#include <visualization_msgs/Marker.h>
+
 
 #include <sfc_core/polytope.h>
 #include <sfc_core/ellipsoid.h>
@@ -60,13 +60,14 @@
 #include <utils/optimization/mvie.h>
 #include <utils/header/type_utils.hpp>
 
-// 已移除原 ros_interface 依赖，内部直接提供简单可视化辅助函数。
+#include <vis_interface/vis_interface.hpp>
 
 using super_utils::RET_CODE;
 using geometry_utils::Ellipsoid;
 using geometry_utils::Polytope;
 
 class CIRI {
+	vis_interface::VisInterface::Ptr vis_ptr_;
     double robot_r_{0};
     int iter_num_{1};
     bool debug_en{false};
@@ -122,11 +123,13 @@ class CIRI {
     }
 
 public:
-    // CIRI() = default;
+    CIRI() = default;
 
-    // 仅保留默认构造，不再依赖外部 ros_ptr_。
-    // 如需开启可视化，在 ROS 已初始化后自动创建 publisher。
-    CIRI(){ debug_en = true; }
+    CIRI(const vis_interface::VisInterface::Ptr & vis_ptr):vis_ptr_(vis_ptr){
+        debug_en = true;
+        // const std::string failed_log_path = DEBUG_FILE_DIR("ciri_failed_log.csv");
+        // failed_log.open(failed_log_path, std::ios::out | std::ios::trunc);
+    }
 
     ~CIRI() = default;
 
@@ -141,12 +144,4 @@ public:
 
     void getPolytope(Polytope &optimized_poly);
 
-private:
-    // --- 可视化相关 ---
-    ros::Publisher ciri_marker_pub_;
-    bool viz_inited_{false};
-    void initVizIfNeeded();
-    void vizCiriSeedLine(const Eigen::Vector3d& a, const Eigen::Vector3d& b, double robot_r);
-    void vizCiriInfeasiblePoint(const Eigen::Vector3d& p);
-    void vizCiriEllipsoid(const Ellipsoid& E);
 };
