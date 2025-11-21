@@ -534,26 +534,29 @@ void PlannerClass::process()
             break;
     }
 
-    // STEP3: solve and update new control commands
-    if (rotor_low_speed_during_land) // used at the start of auto takeoff
-    {
-        motors_idling(imu_data, u);
-    }
-    else if(state != MANUAL_CTRL)
-    {
-        // controller update
-        if(state == AUTO_HOVER || state == AUTO_TAKEOFF)
-        {
-            MPCSetGoal(des.p, des.v, des.a, des.yaw);
-        }
-        else if(state == CMD_CTRL)
-        {
-            //MPCSetGoal(des.p, des.v, des.a, des.yaw);
-            CmdMode(odom_data,des);
-        }
-        ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
-        MpcCalculate(odom_data, imu_data, u);
-    }
+    MPCSetGoal(des.p, des.v, des.a, des.yaw);
+    ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
+    MpcCalculate(odom_data, imu_data, u);
+    // // STEP3: solve and update new control commands
+    // if (rotor_low_speed_during_land) // used at the start of auto takeoff
+    // {
+    //     motors_idling(imu_data, u);
+    // }
+    // else if(state != MANUAL_CTRL)
+    // {
+    //     // controller update
+    //     if(state == AUTO_HOVER || state == AUTO_TAKEOFF)
+    //     {
+    //         MPCSetGoal(des.p, des.v, des.a, des.yaw);
+    //     }
+    //     else if(state == CMD_CTRL)
+    //     {
+    //         //MPCSetGoal(des.p, des.v, des.a, des.yaw);
+    //         CmdMode(odom_data,des);
+    //     }
+    //     ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
+    //     MpcCalculate(odom_data, imu_data, u);
+    // }
 
     // Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
     // // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
@@ -1117,7 +1120,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     Eigen::MatrixXd A1, B1;
     Eigen::VectorXd x_optimal = mpc_->X_0_;
     if (success_flag) {
-        // ROS_INFO_THROTTLE(1,"MPC SUCCESS");
+        ROS_INFO_THROTTLE(1,"MPC SUCCESS");
         last_mpc_time_ = ros::Time::now();
         for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
             mpc_->GetOptimCmd(u_optimal, i);
@@ -1160,7 +1163,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
     }
     
-    
+    ROS_INFO_THROTTLE(1,"a_optimal = %.2f, %.2f, %.2f",a_optimal.x(),a_optimal.y(),a_optimal.z());
     ros::Time df_start = ros::Time::now();
     estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备

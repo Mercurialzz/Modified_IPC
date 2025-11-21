@@ -25,8 +25,8 @@ replan_forward_dt: 0.1
 planning_horizon: 7.0
 sensing_horizon: -1
 receding_dis: 4.0
-robot_r: 0.2
-ref_dis:     40    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
+robot_r: 0.3
+ref_dis:     20    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
 path_dis:    0.02  #路径稠密化的插值间距 5cm
 
 yaw_ctrl_flag:  true

@@ -143,7 +143,7 @@ private:
         double R_p_{100.0}, R_v_{0.0}, R_a_{0.0};
         double R_u_{10.0}, R_u_con_{1.0};
         double R_pN_{0.0}, R_vN_{0.0}, R_aN_{0.0};
-        Eigen::Matrix3d Drag_;
+        Eigen::Matrix3d Drag_; //初始化
         Eigen::Vector3d v_min_, v_max_, a_min_, a_max_, u_min_, u_max_;
     } cfg_;
 
