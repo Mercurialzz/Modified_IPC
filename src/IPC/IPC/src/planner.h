@@ -24,7 +24,7 @@
 #include <mavros_msgs/CommandBool.h>
 #include <Eigen/Dense>
 
-#include "../include/mpc_control/mpc.h"
+#include "mpc_control/mpc.h"
 #include "path_search/rog_astar.h"
 #include "sfc_core/corridor_generator.h"
 #include <rog_map_ros/rog_map_ros1.hpp>

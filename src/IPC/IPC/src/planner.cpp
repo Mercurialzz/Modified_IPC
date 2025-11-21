@@ -56,29 +56,29 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     
     mpc_   = std::make_shared<MPCPlannerClass>(nh);
     
-    // // 初始化 ROGMap - 从 ROS 参数服务器读取配置文件路径
-    // std::string config_path;
-    // if (!nh.getParam("config_path", config_path)) {
-    //     // 如果参数不存在,使用默认路径
-    //     ROS_ERROR("config_path parameter not found");
-    // } else {
-    //     ROS_INFO("ROGMap config path from launch file: %s", config_path.c_str());
-    // }
+    // 初始化 ROGMap - 从 ROS 参数服务器读取配置文件路径
+    std::string config_path;
+    if (!nh.getParam("config_path", config_path)) {
+        // 如果参数不存在,使用默认路径
+        ROS_ERROR("config_path parameter not found");
+    } else {
+        ROS_INFO("ROGMap config path from launch file: %s", config_path.c_str());
+    }
     
-    // map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path);
-    // const auto &rog_map_cfg = map_ptr_->getMapConfig();
-    // ROS_INFO("ROGMap initialized successfully.");
+    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path);
+    const auto &rog_map_cfg = map_ptr_->getMapConfig();
+    ROS_INFO("ROGMap initialized successfully.");
 
-    // vis_ptr_ = std::make_shared<vis_interface::VisInterface>(nh);
-    // vis_ptr_->setResolution(rog_map_cfg.resolution);
-    // vis_ptr_->setVisualizationEn(param.visualization_en);
+    vis_ptr_ = std::make_shared<vis_interface::VisInterface>(nh);
+    vis_ptr_->setResolution(rog_map_cfg.resolution);
+    vis_ptr_->setVisualizationEn(param.visualization_en);
 
-    // // 初始化A*
-    // astar_ptr_ = std::make_shared<path_search::Astar>(nh, vis_ptr_, map_ptr_);
-    // const int neighbor_step = floor(param.robot_r / rog_map_cfg.resolution);
-    // astar_ptr_->setFineInfNeighbors(neighbor_step);
-    // //初始化 CorridorGenerator
-    // CorridorInit(param); 
+    // 初始化A*
+    astar_ptr_ = std::make_shared<path_search::Astar>(nh, vis_ptr_, map_ptr_);
+    const int neighbor_step = floor(param.robot_r / rog_map_cfg.resolution);
+    astar_ptr_->setFineInfNeighbors(neighbor_step);
+    //初始化 CorridorGenerator
+    CorridorInit(param); 
 
     std::string file = ros::package::getPath("ipc") + "/config";
     write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
@@ -138,7 +138,7 @@ void PlannerClass::StateUpdate(void)
             ROS_INFO("Initial yaw set to %.2f rad", init_yaw_);
             odom_int = true;
         }
-        //  std::lock_guard<std::mutex> lock(odom_mutex_);
+        std::lock_guard<std::mutex> lock(odom_mutex_);
         odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
         yaw_ = odom_data.yaw;
         odom_data.recv_new_msg = false;
@@ -149,11 +149,13 @@ void PlannerClass::StateUpdate(void)
         static Eigen::Vector3d last_goal;
         if (last_goal != goal_data.new_goal)
         {
-            //  std::lock_guard<std::mutex> lock(goal_mutex_);
+            std::lock_guard<std::mutex> lock(goal_mutex_);
             goal_p_ = goal_data.new_goal;
+            
             if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
             if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
             new_goal_flag_ = true;
+            goal_p_.z() = 2.5;
             ROS_INFO("[px4ctrl] New goal received: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
         }
         // new_goal_flag_ = false;
@@ -534,29 +536,26 @@ void PlannerClass::process()
             break;
     }
 
-    MPCSetGoal(des.p, des.v, des.a, des.yaw);
-    ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
-    MpcCalculate(odom_data, imu_data, u);
-    // // STEP3: solve and update new control commands
-    // if (rotor_low_speed_during_land) // used at the start of auto takeoff
-    // {
-    //     motors_idling(imu_data, u);
-    // }
-    // else if(state != MANUAL_CTRL)
-    // {
-    //     // controller update
-    //     if(state == AUTO_HOVER || state == AUTO_TAKEOFF)
-    //     {
-    //         MPCSetGoal(des.p, des.v, des.a, des.yaw);
-    //     }
-    //     else if(state == CMD_CTRL)
-    //     {
-    //         //MPCSetGoal(des.p, des.v, des.a, des.yaw);
-    //         CmdMode(odom_data,des);
-    //     }
-    //     ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
-    //     MpcCalculate(odom_data, imu_data, u);
-    // }
+    // STEP3: solve and update new control commands
+    if (rotor_low_speed_during_land) // used at the start of auto takeoff
+    {
+        motors_idling(imu_data, u);
+    }
+    else if(state != MANUAL_CTRL)
+    {
+        // controller update
+        if(state == AUTO_HOVER || state == AUTO_TAKEOFF)
+        {
+            MPCSetGoal(des.p, des.v, des.a, des.yaw);
+        }
+        else if(state == CMD_CTRL)
+        {
+            //MPCSetGoal(des.p, des.v, des.a, des.yaw);
+            CmdMode(odom_data,des);
+        }
+        ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
+        MpcCalculate(odom_data, imu_data, u);
+    }
 
     // Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
     // // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
@@ -1163,7 +1162,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
     }
     
-    ROS_INFO_THROTTLE(1,"a_optimal = %.2f, %.2f, %.2f",a_optimal.x(),a_optimal.y(),a_optimal.z());
+    // ROS_INFO_THROTTLE(1,"a_optimal ");
     ros::Time df_start = ros::Time::now();
     estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备

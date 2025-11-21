@@ -143,7 +143,8 @@ void MPCPlannerClass::ProblemFormation(void)
     /* system status: {p1, v1, a1, p2, v2, a2, ... , pN, vN, aN} 
        input: {u0, u1, u2, ... , u(N-1)}
     */
-
+    std::cout << "MPC horizon: " << cfg_.MPC_HORIZON << ", step: " << cfg_.MPC_STEP << std::endl;
+    std::cout << "R_p_: " << cfg_.R_p_ << ", R_v_: " << cfg_.R_v_ << ", R_a_: " << cfg_.R_a_ << std::endl;
     // system model
     SystemModel(mpc_.Ax, mpc_.Bx, cfg_.MPC_STEP);
     MPCModel(mpc_.Ax, mpc_.Bx, mpc_.M, mpc_.C);

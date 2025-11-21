@@ -46,6 +46,9 @@ public:
     MPCPlannerClass(){}
     MPCPlannerClass(ros::NodeHandle& nh) {
         init_param(nh);
+        MPC_HORIZON = cfg_.MPC_HORIZON;
+        MPC_STEP = cfg_.MPC_STEP;
+        ctrl_delay_ = cfg_.ctrl_delay_;
         // ROS_INFO("v_max:%f", cfg_.v_max_.x());
         // std::cout << "v_max" << cfg_.v_max_.x() << " " << cfg_.v_max_.y() << " " << cfg_.v_max_.z() ;
         ProblemFormation();
