@@ -1,7 +1,7 @@
-#----------------- MPC param -----------------#
+#----------------- base param -----------------#
 simulation:    false
 perfect_simu:  false
-mass:          8.5 # kg
+mass:          2.4 # kg
 gra:           9.81 
 ctrl_freq_max: 100.0
 max_manual_vel: 4.0
@@ -12,6 +12,22 @@ ctrl_delay:    0.0
 thrust_limit:  0.9
 hover_esti:    true
 hover_perc:    0.35
+
+visualization_en: true
+corridor_bound_dis: 1.0
+corridor_line_max_length: 1.2
+safe_corridor_line_max_length: 5.0
+visual_process: false
+frontend_in_known_free: false
+iris_iter_num: 2
+obs_skip_num: 2
+replan_forward_dt: 0.1
+planning_horizon: 7.0
+sensing_horizon: -1
+receding_dis: 4.0
+robot_r: 0.2
+ref_dis:     40    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
+path_dis:    0.02  #路径稠密化的插值间距 5cm
 
 yaw_ctrl_flag:  true
 yaw_gain:       2.0
@@ -63,19 +79,18 @@ astar:
   expand_dyn:  0.8  #这个参数是规划路径时对障碍物的膨胀距离要大于等于expand_fix，同时为了保证轨迹位于走廊内，expand_dyn要大于等于sfc_dis
   expand_fix:  0.5  ##障碍物膨胀，安全飞行走廊的安全距离要大于等于这个值
 
-fsm: #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
-  ref_dis:     40
-  path_dis:    0.02  #路径稠密化的插值间距 5cm
 
-corridor:  # 走廊生成参数
-  corridor_bound_dis:       10.0
-  corridor_line_max_length: 1.2
-  robot_r:                  0.3    # 机器人半径（米），用于 z 轴收缩
-  iris_iter_num:            2
-  obs_skip_num:             2
+rog_astar:
+  map_voxel_num: [ 500, 500, 100 ]
+  visual_process: false
+  allow_diag: true
+  # 0 DIAG; 1 MANHATTAN; 2 EUCLIDEAN
+  heu_type: 2
+  debug_visualization_en: false
+  # path_dis:    0.02  #floyd路径稠密化的插值间距 2cm
 
 mpc:
-  horizon:     20 #总的预测步数，总的预测距离为 horizon * ref_dis * path_dis  要在box内
+  horizon:     15 #总的预测步数，总的预测距离为 horizon * ref_dis * path_dis  要在box内
   step:        0.1
   # ctrl_delay:  0   # n step
 

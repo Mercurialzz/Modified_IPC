@@ -59,9 +59,6 @@ add_executable(ipc_node
   src/planner.cpp
   src/input.cpp
   src/param.cpp
-  include/astar.cpp
-  include/mpc.cpp
-  include/local_astar.cpp
   src/sfc_core/ciri.cpp
   src/sfc_core/corridor_generator.cpp
   src/utils/polytope.cpp
@@ -72,6 +69,8 @@ add_executable(ipc_node
   src/utils/optimization_utils.cpp
   src/utils/sdlp.cpp
   src/utils/lbfgs.cpp
+  src/path_searth/rog_astar.cpp
+  src/mpc_control/mpc.cpp
 )
 add_dependencies(ipc_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(ipc_node

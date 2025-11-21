@@ -5,6 +5,7 @@
 
 #include <Eigen/Eigen>
 #include "OsqpEigen/OsqpEigen.h"
+
 /* QP formulation:
     min 1/2* x^T H x + f^T x   subject to
     b <= Ax <= b (Ax = b),  d <= Ax <= f,  l <= x <= u
@@ -44,52 +45,9 @@ class MPCPlannerClass {
 public:
     MPCPlannerClass(){}
     MPCPlannerClass(ros::NodeHandle& nh) {
-        Drag_.setZero();
-        
-        nh.param("/ipc_node/mpc/horizon", MPC_HORIZON, 5);
-        nh.param("/ipc_node/mpc/step",    MPC_STEP, 0.1);
-        nh.param("/ipc_node/mpc/ctrl_delay", ctrl_delay_, 0);
-        u_last_.resize(ctrl_delay_);
-        for (int i = 0; i < u_last_.size(); i++) {
-            u_last_[i] = Eigen::Vector3d::Zero();
-        }
-
-        nh.param("/ipc_node/mpc/R_p",  R_p_, 100.0);
-        nh.param("/ipc_node/mpc/R_v",  R_v_, 0.0);
-        nh.param("/ipc_node/mpc/R_a",  R_a_, 0.0);
-        nh.param("/ipc_node/mpc/R_u",  R_u_, 10.0);
-        nh.param("/ipc_node/mpc/R_u_con",  R_u_con_, 1.0);
-        nh.param("/ipc_node/mpc/R_pN", R_pN_, 0.0);
-        nh.param("/ipc_node/mpc/R_vN", R_vN_, 0.0);
-        nh.param("/ipc_node/mpc/R_aN", R_aN_, 0.0);
-
-        nh.param("/ipc_node/mpc/D_x", Drag_(0, 0), 0.0);
-        nh.param("/ipc_node/mpc/D_y", Drag_(1, 1), 0.0);
-        nh.param("/ipc_node/mpc/D_z", Drag_(2, 2), 0.0);
-
-        nh.param("/ipc_node/mpc/vx_min", v_min_.x(), -1.0);
-        nh.param("/ipc_node/mpc/vy_min", v_min_.y(), -1.0);
-        nh.param("/ipc_node/mpc/vz_min", v_min_.z(), -1.0);
-        nh.param("/ipc_node/mpc/vx_max", v_max_.x(),  1.0);
-        nh.param("/ipc_node/mpc/vy_max", v_max_.y(),  1.0);
-        nh.param("/ipc_node/mpc/vz_max", v_max_.z(),  1.0);
-
-        nh.param("/ipc_node/mpc/ax_min", a_min_.x(), -1.0);
-        nh.param("/ipc_node/mpc/ay_min", a_min_.y(), -1.0);
-        nh.param("/ipc_node/mpc/az_min", a_min_.z(), -1.0);
-        nh.param("/ipc_node/mpc/ax_max", a_max_.x(),  1.0);
-        nh.param("/ipc_node/mpc/ay_max", a_max_.y(),  1.0);
-        nh.param("/ipc_node/mpc/az_max", a_max_.z(),  1.0);
-
-        nh.param("/ipc_node/mpc/ux_min", u_min_.x(), -1.0);
-        nh.param("/ipc_node/mpc/uy_min", u_min_.y(), -1.0);
-        nh.param("/ipc_node/mpc/uz_min", u_min_.z(), -1.0);
-        nh.param("/ipc_node/mpc/ux_max", u_max_.x(),  1.0);
-        nh.param("/ipc_node/mpc/uy_max", u_max_.y(),  1.0);
-        nh.param("/ipc_node/mpc/uz_max", u_max_.z(),  1.0);
-
-        // ROS_INFO("v_max:%f", v_max_.x());
-        // std::cout << "v_max" << v_max_.x() << " " << v_max_.y() << " " << v_max_.z() ;
+        init_param(nh);
+        // ROS_INFO("v_max:%f", cfg_.v_max_.x());
+        // std::cout << "v_max" << cfg_.v_max_.x() << " " << cfg_.v_max_.y() << " " << cfg_.v_max_.z() ;
         ProblemFormation();
         X_0_.resize(mpc_.M.cols(), 1);
         X_r_.resize(mpc_.M.rows(), 1);
@@ -127,10 +85,10 @@ public:
     }
     void StatusSaturation(Eigen::Vector3d& v0, Eigen::Vector3d& a0) {
         for (int i = 0; i < 3; i++) {
-            if (v0(i, 0) > v_max_(i, 0)) v0(i, 0) = v_max_(i, 0);
-            if (v0(i, 0) < v_min_(i, 0)) v0(i, 0) = v_min_(i, 0);
-            if (a0(i, 0) > a_max_(i, 0)) a0(i, 0) = a_max_(i, 0);
-            if (a0(i, 0) < a_min_(i, 0)) a0(i, 0) = a_min_(i, 0);
+            if (v0(i, 0) > cfg_.v_max_(i, 0)) v0(i, 0) = cfg_.v_max_(i, 0);
+            if (v0(i, 0) < cfg_.v_min_(i, 0)) v0(i, 0) = cfg_.v_min_(i, 0);
+            if (a0(i, 0) > cfg_.a_max_(i, 0)) a0(i, 0) = cfg_.a_max_(i, 0);
+            if (a0(i, 0) < cfg_.a_min_(i, 0)) a0(i, 0) = cfg_.a_min_(i, 0);
         }
     }
     void UpdateOutputHistory(Eigen::Vector3d u) {
@@ -176,11 +134,79 @@ private:
     ros::Time print_time_;
     int fps_;
     std::vector<Eigen::Matrix<double, Eigen::Dynamic, 4>> planes_;
+    /*mpc param*/
+    struct MPC_param
+    {
+        int MPC_HORIZON{15};
+        double MPC_STEP{0.1};
+        int ctrl_delay_{0};
+        double R_p_{100.0}, R_v_{0.0}, R_a_{0.0};
+        double R_u_{10.0}, R_u_con_{1.0};
+        double R_pN_{0.0}, R_vN_{0.0}, R_aN_{0.0};
+        Eigen::Matrix3d Drag_;
+        Eigen::Vector3d v_min_, v_max_, a_min_, a_max_, u_min_, u_max_;
+    } cfg_;
 
-    // mpc param
-    double R_p_, R_v_, R_a_, R_u_, R_u_con_, R_pN_, R_vN_, R_aN_;
-    Eigen::Matrix3d Drag_;
-    Eigen::Vector3d v_min_, v_max_, a_min_, a_max_, u_min_, u_max_;
+    void init_param(const ros::NodeHandle &nh)
+    {
+        cfg_.Drag_.setZero();
+        read_essential_param(nh, "mpc/horizon", cfg_.MPC_HORIZON);
+        read_essential_param(nh, "mpc/step",    cfg_.MPC_STEP);
+        // read_essential_param(nh, "mpc/ctrl_delay", ctrl_delay_);
+        u_last_.resize(cfg_.ctrl_delay_);
+        for (int i = 0; i < u_last_.size(); i++) {
+            u_last_[i] = Eigen::Vector3d::Zero();
+        }
+
+        read_essential_param(nh, "mpc/R_p",  cfg_.R_p_);
+        read_essential_param(nh, "mpc/R_v",  cfg_.R_v_);
+        read_essential_param(nh, "mpc/R_a",  cfg_.R_a_);
+        read_essential_param(nh, "mpc/R_u",  cfg_.R_u_);
+        read_essential_param(nh, "mpc/R_u_con",  cfg_.R_u_con_);
+        read_essential_param(nh, "mpc/R_pN", cfg_.R_pN_);
+        read_essential_param(nh, "mpc/R_vN", cfg_.R_vN_);
+        read_essential_param(nh, "mpc/R_aN", cfg_.R_aN_);
+
+        read_essential_param(nh, "mpc/D_x", cfg_.Drag_(0, 0));
+        read_essential_param(nh, "mpc/D_y", cfg_.Drag_(1, 1));
+        read_essential_param(nh, "mpc/D_z", cfg_.Drag_(2, 2));
+
+        read_essential_param(nh, "mpc/vx_min", cfg_.v_min_.x());
+        read_essential_param(nh, "mpc/vy_min", cfg_.v_min_.y());
+        read_essential_param(nh, "mpc/vz_min", cfg_.v_min_.z());
+        read_essential_param(nh, "mpc/vx_max", cfg_.v_max_.x());
+        read_essential_param(nh, "mpc/vy_max", cfg_.v_max_.y());
+        read_essential_param(nh, "mpc/vz_max", cfg_.v_max_.z());
+
+        read_essential_param(nh, "mpc/ax_min", cfg_.a_min_.x());
+        read_essential_param(nh, "mpc/ay_min", cfg_.a_min_.y());
+        read_essential_param(nh, "mpc/az_min", cfg_.a_min_.z());
+        read_essential_param(nh, "mpc/ax_max", cfg_.a_max_.x());
+        read_essential_param(nh, "mpc/ay_max", cfg_.a_max_.y());
+        read_essential_param(nh, "mpc/az_max", cfg_.a_max_.z());
+        read_essential_param(nh, "mpc/ux_min", cfg_.u_min_.x());
+        read_essential_param(nh, "mpc/uy_min", cfg_.u_min_.y());
+        read_essential_param(nh, "mpc/uz_min", cfg_.u_min_.z());
+        read_essential_param(nh, "mpc/ux_max", cfg_.u_max_.x());
+        read_essential_param(nh, "mpc/uy_max", cfg_.u_max_.y());
+        read_essential_param(nh, "mpc/uz_max", cfg_.u_max_.z());
+        
+    }
+    template <typename TName, typename TVal>
+	void read_essential_param(const ros::NodeHandle &nh, const TName &name, TVal &val)
+	{
+		if (nh.getParam(name, val))
+		{
+			// 打印参数值
+            ROS_INFO_STREAM("Read param: " << name << " successfully, value: " << val);
+		}
+		else
+		{
+			ROS_ERROR_STREAM("Read param: " << name << " failed.");
+			ROS_BREAK();
+		}
+	};
+
 };
 
 #endif

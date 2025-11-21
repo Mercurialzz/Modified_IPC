@@ -38,22 +38,21 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "goal_y", goal_y);
 	read_essential_param(nh, "goal_z", goal_z);
 
-	read_essential_param(nh, "astar/resolution", resolution);
-	read_essential_param(nh, "astar/map_x_size", map_size.x());
-	read_essential_param(nh, "astar/map_y_size", map_size.y());
-	read_essential_param(nh, "astar/map_z_size", map_size.z());
-	read_essential_param(nh, "astar/expand_dyn", expand_dyn);
-	read_essential_param(nh, "astar/expand_fix", expand_fix);
+	read_essential_param(nh, "visualization_en", visualization_en);
+	read_essential_param(nh, "corridor_bound_dis", corridor_bound_dis);
+	read_essential_param(nh, "corridor_line_max_length", corridor_line_max_length);
+	read_essential_param(nh, "safe_corridor_line_max_length", safe_corridor_line_max_length);
+	read_essential_param(nh, "frontend_in_known_free", frontend_in_known_free);
+	read_essential_param(nh, "iris_iter_num", iris_iter_num);
+	read_essential_param(nh, "obs_skip_num", obs_skip_num);
+	read_essential_param(nh, "replan_forward_dt", replan_forward_dt);
+	read_essential_param(nh, "planning_horizon", planning_horizon);
+	read_essential_param(nh, "sensing_horizon", sensing_horizon);
+	read_essential_param(nh, "receding_dis", receding_dis);
+	read_essential_param(nh, "robot_r", robot_r);
+	read_essential_param(nh, "ref_dis", ref_dis);
+	read_essential_param(nh, "path_dis", path_dis);
 
-	read_essential_param(nh, "fsm/ref_dis", ref_dis);
-	read_essential_param(nh, "fsm/path_dis", path_dis);
-
-	// Corridor generation parameters
-	read_essential_param(nh, "corridor/corridor_bound_dis", corridor_bound_dis);
-	read_essential_param(nh, "corridor/corridor_line_max_length", corridor_seed_line_max_dis);
-	read_essential_param(nh, "corridor/robot_r", corridor_robot_r);
-	read_essential_param(nh, "corridor/obs_skip_num", corridor_obs_skip_num);
-	read_essential_param(nh, "corridor/iris_iter_num", corridor_iris_iter_num);
 
 	read_essential_param(nh, "msg_timeout/odom", msg_timeout.odom);
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);

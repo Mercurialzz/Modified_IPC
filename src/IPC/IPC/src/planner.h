@@ -24,12 +24,13 @@
 #include <mavros_msgs/CommandBool.h>
 #include <Eigen/Dense>
 
-#include "../include/astar.h"
-#include "../include/mpc.h"
-#include "../include/local_astar.h"
+#include "../include/mpc_control/mpc.h"
+#include "path_search/rog_astar.h"
 #include "sfc_core/corridor_generator.h"
 #include <rog_map_ros/rog_map_ros1.hpp>
 #include <vis_interface/vis_interface.hpp>
+#include <utils/header/type_utils.hpp>
+
 #include "input.h"
 #include "param.h"
 
@@ -155,12 +156,17 @@ public:
     bool judge_in_fence();
     bool judge_close_to_fence();
 
-		//
-	void LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg);
 private:
 	State_t state; // Should only be changed in PlannerClass::process() function!
 	AutoTakeoffLand_t takeoff_land;
 	RcDy_Data_t rc_dy_data;
+
+	struct GoalInfo {
+		Vec3f goal_p{0, 0, 0};
+		double goal_yaw{0};
+		bool new_goal{true};
+		bool goal_valid{true};
+	} gi_;
 
 	// std::shared_ptr<PlannerClass> planner_;
 	bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
@@ -189,13 +195,12 @@ private:
 	double yaw_int_{0.0};
 
 	int astar_index_{0};
-    std::vector<Eigen::Vector3d> astar_path_;
-    std::vector<Eigen::Vector3d> waypoints_;
-    std::vector<Eigen::Vector3d> follow_path_;
-    std::vector<Eigen::Vector3d> replan_path_;
-    std::vector<Eigen::Vector3d> local_pc_;
-    std::vector<Eigen::Vector3d> local_pc_buffer_[10];
-    std::vector<Eigen::Vector3d> mpc_goals_;
+    vec_Vec3f astar_path_;
+    vec_Vec3f waypoints_;
+    vec_Vec3f follow_path_;
+    vec_Vec3f replan_path_;
+    vec_Vec3f mpc_goals_;
+
 	bool have_path_{false},last_have_path_{false};
 
 	double thr2acc_;
@@ -209,11 +214,10 @@ private:
     pcl::PointCloud<pcl::PointXYZ>::Ptr static_cloud_;
 
     std::shared_ptr<rog_map::ROGMapROS> map_ptr_;
-    std::shared_ptr<LoaclAstarClass> local_astar_;
     std::shared_ptr<MPCPlannerClass> mpc_;
     std::shared_ptr<CorridorGenerator> corridor_gen_;
 	std::shared_ptr<vis_interface::VisInterface> vis_ptr_;
-
+	std::shared_ptr<path_search::Astar> astar_ptr_;
 
 	// ---- control related ----
 	Desired_State_t get_hover_des();
@@ -238,7 +242,7 @@ private:
         thr2acc_ = 9.81 / hover_perc_;
         P_ = 100;
     }
-	void PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des);
+	// void PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des);
     void GeneratePolyOnPath();
     void GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
 	void GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
@@ -258,11 +262,14 @@ private:
 	void publish_trigger(const nav_msgs::Odometry &odom_msg);
 
 
-	void AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale);
+	void AstarPublish(vec_Vec3f& nodes, uint8_t type, double scale);
 	void CmdPublish(Eigen::Vector3d p_r, Eigen::Vector3d v_r, Eigen::Vector3d a_r, Eigen::Vector3d j_r);
 	void MPCPathPublish(std::vector<Eigen::Vector3d> &pt);
 	void StateUpdate(void);
 	void CorridorInit(Parameter_t &param);
+	bool PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f &path);
+	void PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal);
+	void EvaluateReplan();
 };
 
 #endif

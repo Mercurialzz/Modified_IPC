@@ -1,4 +1,4 @@
-#include "mpc.h"
+#include "mpc_control/mpc.h"
 
 bool MPCPlannerClass::Run(void)
 {
@@ -122,7 +122,7 @@ bool MPCPlannerClass::Run(void)
 
 void MPCPlannerClass::SetFSC(Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, int step)
 {
-    if (step >= MPC_HORIZON || step < 0) {
+    if (step >= cfg_.MPC_HORIZON || step < 0) {
         ROS_WARN("[MPC]: Check sfc index! Error index: %d", step);
     }
     planes_[step] = planes;
@@ -132,7 +132,8 @@ void MPCPlannerClass::SetFSC(Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, i
     for (int i = 0; i < planes.rows(); i++) {
         mpc_.T.row(mpc_.T.rows()-1 - i).setZero();
         mpc_.T.block(mpc_.T.rows()-1 - i, step*3, 1, 3) = Eigen::Vector3d(planes(i, 0), planes(i, 1), planes(i, 2)).transpose(); 
-        mpc_.A_sfc_low(mpc_.A_sfc_low.rows()-1 - i, 0) = -OSQP_INFTY;
+    // OSQP_INFTY may be undefined with current includes; use large negative as -inf proxy
+    mpc_.A_sfc_low(mpc_.A_sfc_low.rows()-1 - i, 0) = -OSQP_INFTY;
         mpc_.D_T(mpc_.D_T.rows()-1 - i, 0) = planes(i, 3);
     }
 }
@@ -144,22 +145,22 @@ void MPCPlannerClass::ProblemFormation(void)
     */
 
     // system model
-    SystemModel(mpc_.Ax, mpc_.Bx, MPC_STEP);
+    SystemModel(mpc_.Ax, mpc_.Bx, cfg_.MPC_STEP);
     MPCModel(mpc_.Ax, mpc_.Bx, mpc_.M, mpc_.C);
 
     // cost function (Quadratic term and Linear term)
     Eigen::MatrixXd Q = Eigen::MatrixXd(9, 9).setZero();
-    Q.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * R_p_;
-    Q.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * R_v_;
-    Q.block(6, 6, 3, 3) = Eigen::Matrix3d::Identity() * R_a_;
-    Eigen::MatrixXd R = Eigen::MatrixXd(3, 3).setIdentity() * R_u_;
-    Eigen::MatrixXd R_con = Eigen::MatrixXd(3, 3).setIdentity() * R_u_con_;
+    Q.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_p_;
+    Q.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_v_;
+    Q.block(6, 6, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_a_;
+    Eigen::MatrixXd R = Eigen::MatrixXd(3, 3).setIdentity() * cfg_.R_u_;
+    Eigen::MatrixXd R_con = Eigen::MatrixXd(3, 3).setIdentity() * cfg_.R_u_con_;
     Eigen::MatrixXd F = Eigen::MatrixXd(9, 9).setZero();
-    F.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * R_pN_;
-    F.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * R_vN_;
-    F.block(6, 6, 3, 3) = Eigen::Matrix3d::Identity() * R_aN_;
+    F.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_pN_;
+    F.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_vN_;
+    F.block(6, 6, 3, 3) = Eigen::Matrix3d::Identity() * cfg_.R_aN_;
     QuadraticTerm(mpc_, Q, R, R_con, F);
-    LinearTerm(mpc_, Eigen::VectorXd(9, 1).setZero(), Eigen::VectorXd(9*MPC_HORIZON, 1).setZero());
+    LinearTerm(mpc_, Eigen::VectorXd(9, 1).setZero(), Eigen::VectorXd(9*cfg_.MPC_HORIZON, 1).setZero());
 
     // system status and input constrains
     ALLConstraint(mpc_);
@@ -178,7 +179,7 @@ void MPCPlannerClass::SystemModel(Eigen::MatrixXd& A, Eigen::MatrixXd& B, double
     A.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity();
     A.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity() * t;
     A.block(0, 6, 3, 3) = Eigen::Matrix3d::Identity() * t * t * 0.5;
-    A.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * (Eigen::Matrix3d::Identity() - Drag_ * t);
+    A.block(3, 3, 3, 3) = Eigen::Matrix3d::Identity() * (Eigen::Matrix3d::Identity() - cfg_.Drag_ * t);
     A.block(3, 6, 3, 3) = Eigen::Matrix3d::Identity() * t;
     A.block(6, 6, 3, 3) = Eigen::Matrix3d::Identity();
 
@@ -192,18 +193,18 @@ void MPCPlannerClass::SystemModel(Eigen::MatrixXd& A, Eigen::MatrixXd& B, double
 void MPCPlannerClass::MPCModel(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, 
                                Eigen::MatrixXd& M, Eigen::MatrixXd& C)
 {
-    M.resize(MPC_HORIZON * A.rows(), A.cols());
+    M.resize(cfg_.MPC_HORIZON * A.rows(), A.cols());
     M.setZero();
-    C.resize(MPC_HORIZON * B.rows(), MPC_HORIZON * B.cols());
+    C.resize(cfg_.MPC_HORIZON * B.rows(), cfg_.MPC_HORIZON * B.cols());
     C.setZero();
 
     Eigen::MatrixXd temp = Eigen::MatrixXd(A.rows(), A.cols()).setIdentity();
-    for (int i = 0; i < MPC_HORIZON; i++) {
+    for (int i = 0; i < cfg_.MPC_HORIZON; i++) {
         if (i == 0) {
             C.block(0, 0, B.rows(), B.cols()) = B;
         } else {
             Eigen::MatrixXd temp_c = Eigen::MatrixXd(B.rows(), C.cols());
-            temp_c << temp * B, C.block((i-1) * B.rows(), 0, B.rows(), B.cols() * (MPC_HORIZON-1));
+            temp_c << temp * B, C.block((i-1) * B.rows(), 0, B.rows(), B.cols() * (cfg_.MPC_HORIZON-1));
             C.block(B.rows() * i, 0, B.rows(), C.cols()) = temp_c;
         }
 
@@ -215,17 +216,17 @@ void MPCPlannerClass::MPCModel(const Eigen::MatrixXd& A, const Eigen::MatrixXd& 
 void MPCPlannerClass::QuadraticTerm(mpc_osqp_t& mpc, const Eigen::MatrixXd& Q, const Eigen::MatrixXd& R, 
                                     const Eigen::MatrixXd& R_con, const Eigen::MatrixXd& F)
 {
-    mpc.Q_bar.resize(Q.rows() * MPC_HORIZON, Q.cols() * MPC_HORIZON);
+    mpc.Q_bar.resize(Q.rows() * cfg_.MPC_HORIZON, Q.cols() * cfg_.MPC_HORIZON);
     mpc.Q_bar.setZero();
-    mpc.R_bar.resize(R.rows() * MPC_HORIZON, R.cols() * MPC_HORIZON);
+    mpc.R_bar.resize(R.rows() * cfg_.MPC_HORIZON, R.cols() * cfg_.MPC_HORIZON);
     mpc.R_bar.setZero();
-    mpc.R_con_bar.resize(R_con.rows() * MPC_HORIZON, R_con.cols() * MPC_HORIZON);
+    mpc.R_con_bar.resize(R_con.rows() * cfg_.MPC_HORIZON, R_con.cols() * cfg_.MPC_HORIZON);
     mpc.R_con_bar.setZero();
-    for (int i = 0; i < MPC_HORIZON; i++) {
+    for (int i = 0; i < cfg_.MPC_HORIZON; i++) {
         mpc.Q_bar.block(i * Q.rows(), i * Q.cols(), Q.rows(), Q.cols()) = Q;
         mpc.R_bar.block(i * R.rows(), i * R.cols(), R.rows(), R.cols()) = R;
         if (i == 0) mpc.R_con_bar.block(0, 0, R_con.rows(), R_con.cols()) = R_con;
-        else if (i == MPC_HORIZON - 1) {
+        else if (i == cfg_.MPC_HORIZON - 1) {
             mpc.R_con_bar.block(i * R_con.rows(), i * R_con.cols(), R_con.rows(), R_con.cols()) = R_con;
             mpc.R_con_bar.block(i * R_con.rows(), (i-1) * R_con.cols(), R_con.rows(), R_con.cols()) = -2 * R_con;
         } else {
@@ -233,7 +234,7 @@ void MPCPlannerClass::QuadraticTerm(mpc_osqp_t& mpc, const Eigen::MatrixXd& Q, c
             mpc.R_con_bar.block(i * R_con.rows(), (i-1) * R_con.cols(), R_con.rows(), R_con.cols()) = -2 * R_con;
         }
     }
-    mpc.Q_bar.block((MPC_HORIZON-1) * Q.rows(), (MPC_HORIZON-1) * Q.cols(), F.rows(), F.cols()) = F;
+    mpc.Q_bar.block((cfg_.MPC_HORIZON-1) * Q.rows(), (cfg_.MPC_HORIZON-1) * Q.cols(), F.rows(), F.cols()) = F;
 
     mpc.H.resize(mpc.C.rows(), mpc.C.cols());
     mpc.H = mpc.C.transpose() * mpc.Q_bar * mpc.C + mpc.R_bar + mpc.R_con_bar;
@@ -251,43 +252,43 @@ void MPCPlannerClass::LinearTerm(mpc_osqp_t& mpc, const Eigen::VectorXd& x_0, co
 
 void MPCPlannerClass::ALLConstraint(mpc_osqp_t& mpc)
 {
-    mpc.A_sys.resize(3 * MPC_HORIZON * 3, 3 * MPC_HORIZON);
-    mpc.A_sys_low.resize(3 * MPC_HORIZON * 3, 1);
-    mpc.A_sys_upp.resize(3 * MPC_HORIZON * 3, 1);
+    mpc.A_sys.resize(3 * cfg_.MPC_HORIZON * 3, 3 * cfg_.MPC_HORIZON);
+    mpc.A_sys_low.resize(3 * cfg_.MPC_HORIZON * 3, 1);
+    mpc.A_sys_upp.resize(3 * cfg_.MPC_HORIZON * 3, 1);
 
     /* --system constraint: input, acceleration, velocity limit-- */
-    mpc.u_low.resize(3 * MPC_HORIZON, 1);
-    mpc.u_upp.resize(3 * MPC_HORIZON, 1);
-    mpc.a_low.resize(3 * MPC_HORIZON, 1);
-    mpc.a_upp.resize(3 * MPC_HORIZON, 1);
-    mpc.v_low.resize(3 * MPC_HORIZON, 1);
-    mpc.v_upp.resize(3 * MPC_HORIZON, 1);
-    for (int i = 0; i < MPC_HORIZON; i++) {
-        mpc.u_low.block(i * u_min_.rows(), 0, u_min_.rows(), 1) = u_min_;
-        mpc.u_upp.block(i * u_max_.rows(), 0, u_max_.rows(), 1) = u_max_;
-        mpc.a_low.block(i * a_min_.rows(), 0, a_min_.rows(), 1) = a_min_;
-        mpc.a_upp.block(i * a_max_.rows(), 0, a_max_.rows(), 1) = a_max_;
-        mpc.v_low.block(i * v_min_.rows(), 0, v_min_.rows(), 1) = v_min_;
-        mpc.v_upp.block(i * v_max_.rows(), 0, v_max_.rows(), 1) = v_max_;
+    mpc.u_low.resize(3 * cfg_.MPC_HORIZON, 1);
+    mpc.u_upp.resize(3 * cfg_.MPC_HORIZON, 1);
+    mpc.a_low.resize(3 * cfg_.MPC_HORIZON, 1);
+    mpc.a_upp.resize(3 * cfg_.MPC_HORIZON, 1);
+    mpc.v_low.resize(3 * cfg_.MPC_HORIZON, 1);
+    mpc.v_upp.resize(3 * cfg_.MPC_HORIZON, 1);
+    for (int i = 0; i < cfg_.MPC_HORIZON; i++) {
+        mpc.u_low.block(i * cfg_.u_min_.rows(), 0, cfg_.u_min_.rows(), 1) = cfg_.u_min_;
+        mpc.u_upp.block(i * cfg_.u_max_.rows(), 0, cfg_.u_max_.rows(), 1) = cfg_.u_max_;
+        mpc.a_low.block(i * cfg_.a_min_.rows(), 0, cfg_.a_min_.rows(), 1) = cfg_.a_min_;
+        mpc.a_upp.block(i * cfg_.a_max_.rows(), 0, cfg_.a_max_.rows(), 1) = cfg_.a_max_;
+        mpc.v_low.block(i * cfg_.v_min_.rows(), 0, cfg_.v_min_.rows(), 1) = cfg_.v_min_;
+        mpc.v_upp.block(i * cfg_.v_max_.rows(), 0, cfg_.v_max_.rows(), 1) = cfg_.v_max_;
     }
     
     // input constraint
     Eigen::MatrixXd A_u;
-    A_u.resize(3 * MPC_HORIZON, 3 * MPC_HORIZON);
+    A_u.resize(3 * cfg_.MPC_HORIZON, 3 * cfg_.MPC_HORIZON);
     A_u.setIdentity();
 
     // calculate A_p, A_v, A_a: system state position p, v, a transform to input u
-    mpc.A_p.resize(3 * MPC_HORIZON, mpc.C.cols());
-    mpc.A_v.resize(3 * MPC_HORIZON, mpc.C.cols());
-    mpc.A_a.resize(3 * MPC_HORIZON, mpc.C.cols());
-    mpc.M_p.resize(3 * MPC_HORIZON, mpc.M.cols());
-    mpc.M_v.resize(3 * MPC_HORIZON, mpc.M.cols());
-    mpc.M_a.resize(3 * MPC_HORIZON, mpc.M.cols());
+    mpc.A_p.resize(3 * cfg_.MPC_HORIZON, mpc.C.cols());
+    mpc.A_v.resize(3 * cfg_.MPC_HORIZON, mpc.C.cols());
+    mpc.A_a.resize(3 * cfg_.MPC_HORIZON, mpc.C.cols());
+    mpc.M_p.resize(3 * cfg_.MPC_HORIZON, mpc.M.cols());
+    mpc.M_v.resize(3 * cfg_.MPC_HORIZON, mpc.M.cols());
+    mpc.M_a.resize(3 * cfg_.MPC_HORIZON, mpc.M.cols());
     mpc.B_a.resize(mpc.M_p.rows(), 1);
     mpc.B_v.resize(mpc.M_v.rows(), 1);
     mpc.B_p.resize(mpc.M_a.rows(), 1);
 
-    for (int i = 0; i < MPC_HORIZON; i++) {
+    for (int i = 0; i < cfg_.MPC_HORIZON; i++) {
         mpc.A_p.block(3 * i, 0, 3, mpc.A_p.cols()) = mpc.C.block(9 * i + 0, 0, 3, mpc.C.cols());
         mpc.A_v.block(3 * i, 0, 3, mpc.A_v.cols()) = mpc.C.block(9 * i + 3, 0, 3, mpc.C.cols());
         mpc.A_a.block(3 * i, 0, 3, mpc.A_a.cols()) = mpc.C.block(9 * i + 6, 0, 3, mpc.C.cols());

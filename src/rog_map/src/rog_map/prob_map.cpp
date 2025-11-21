@@ -325,8 +325,8 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     }
     else if (pos.z() < cfg_.virtual_ground_height) {
         // std::cout << YELLOW << "POS" << pos.transpose() << "GROUND_HEIGHT"<< cfg_.virtual_ground_height << RESET<<std::endl;
-        std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
-            << std::endl;
+        // std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
+        //     << std::endl;
         return;
     }
 

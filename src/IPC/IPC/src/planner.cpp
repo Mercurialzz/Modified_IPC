@@ -55,26 +55,30 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
 
     
     mpc_   = std::make_shared<MPCPlannerClass>(nh);
-    local_astar_ = std::make_shared<LoaclAstarClass>();
-    local_astar_->InitMap(resolution_, map_low, map_upp);
-
-    // 初始化 ROGMap - 从 ROS 参数服务器读取配置文件路径
-    std::string rog_map_config_path;
-    if (!nh.getParam("rog_map_config_path", rog_map_config_path)) {
-        // 如果参数不存在,使用默认路径
-        ROS_ERROR("rog_map_config_path parameter not found");
-    } else {
-        ROS_INFO("ROGMap config path from launch file: %s", rog_map_config_path.c_str());
-    }
     
-    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, rog_map_config_path);
-    ROS_INFO("ROGMap initialized successfully.");
-    vis_ptr_ = std::make_shared<vis_interface::VisInterface>(nh);
-    // 初始化 CorridorGenerator,传入 ROGMap 实例
-    //TODO: 看是否需要用config文件把参数导入还是直接用param导入
-    vis_ptr_->setResolution(resolution_);
-    vis_ptr_->setVisualizationEn(1);//这里要改
-    CorridorInit(param); 
+    // // 初始化 ROGMap - 从 ROS 参数服务器读取配置文件路径
+    // std::string config_path;
+    // if (!nh.getParam("config_path", config_path)) {
+    //     // 如果参数不存在,使用默认路径
+    //     ROS_ERROR("config_path parameter not found");
+    // } else {
+    //     ROS_INFO("ROGMap config path from launch file: %s", config_path.c_str());
+    // }
+    
+    // map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path);
+    // const auto &rog_map_cfg = map_ptr_->getMapConfig();
+    // ROS_INFO("ROGMap initialized successfully.");
+
+    // vis_ptr_ = std::make_shared<vis_interface::VisInterface>(nh);
+    // vis_ptr_->setResolution(rog_map_cfg.resolution);
+    // vis_ptr_->setVisualizationEn(param.visualization_en);
+
+    // // 初始化A*
+    // astar_ptr_ = std::make_shared<path_search::Astar>(nh, vis_ptr_, map_ptr_);
+    // const int neighbor_step = floor(param.robot_r / rog_map_cfg.resolution);
+    // astar_ptr_->setFineInfNeighbors(neighbor_step);
+    // //初始化 CorridorGenerator
+    // CorridorInit(param); 
 
     std::string file = ros::package::getPath("ipc") + "/config";
     write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
@@ -96,15 +100,15 @@ void PlannerClass::CorridorInit(Parameter_t &param)
         vis_ptr_,
         map_ptr_,  // 传入 ROGMap 实例
         param.corridor_bound_dis, 
-        param.corridor_seed_line_max_dis, 
+        param.corridor_line_max_length, 
         rog_map_cfg.resolution,
         rog_map_cfg.virtual_ground_height, 
         rog_map_cfg.virtual_ceil_height, 
-        param.corridor_robot_r, 
-        param.corridor_obs_skip_num, 
-        param.corridor_iris_iter_num);
+        param.robot_r, 
+        param.obs_skip_num, 
+        param.iris_iter_num);
 
-    int step = ceil(param.corridor_robot_r / rog_map_cfg.resolution);
+    int step = ceil(param.robot_r / rog_map_cfg.resolution);
         for (int x = -step; x <= step; x++) {
             for (int y = -step; y <= step; y++) {
                 for (int z = -step; z <= step; z++) {
@@ -889,7 +893,7 @@ void PlannerClass::reboot_FCU()
     // 	printf("reboot result=%d(uint8_t), success=%d(uint8_t)\n", reboot_srv.response.result, reboot_srv.response.success);
 }
 
-void PlannerClass::AstarPublish(std::vector<Eigen::Vector3d>& nodes, uint8_t type, double scale) {
+void PlannerClass::AstarPublish(vec_Vec3f& nodes, uint8_t type, double scale) {
     visualization_msgs::Marker node_vis; 
     node_vis.header.frame_id = "map";
     node_vis.header.stamp = ros::Time::now();
@@ -1194,120 +1198,50 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
  *   - follow_path_:  最终用于跟踪的稠密路径（发布可视化与最后点作为goal_pub_）
  *   - goal_pub_:     发布最终跟踪的末端点（PoseStamped）
  */
-void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des)
+void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal)
 {
+    // 执行A*搜索
+    Vec3f start_pos = Vec3f(start_pt.x(), start_pt.y(), start_pt.z());
+    Vec3f goal_pos  = Vec3f(goal.x(),  goal.y(),  goal.z());
+
     astar_path_.clear();
     waypoints_.clear();
     follow_path_.clear();
 
-    Eigen::Vector3d start_p, end_p;
-    start_p = odom.p;                 // A* 起点：当前位姿位置
-    // start_p = odom_p_ + odom_v_ * 0.1;
-    if (extend) {                    // 扩展模式：以当前位姿为中心重置局部A*中心
-        local_astar_->SetCenter(Eigen::Vector3d(odom.p.x(), odom.p.y(), 0.0));
-    } else {
-        // ROS_WARN("[MPC FSM]: Replan!");
-    }
-    // 使用最新局部点云构建占据栅格，带动态膨胀(安全边界)
-    local_astar_->setObsVector(local_pc_, expand_dyn_);
-
-    bool add_goal_flag = false;
-    end_p = des.p;                   // 目标终点：使用期望位置 des.p
-    double delta_x = des.p.x() - odom.p.x();
-    double delta_y = des.p.y() - odom.p.y();
-    // 若目标超出当前局部窗口(map_upp_)，将终点截断到窗口边界，后续可在靠近后再追加真正目标
-    if (std::fabs(delta_x) > map_upp_.x() || std::fabs(delta_y) > map_upp_.y()) {
-        add_goal_flag = true;
-        if (std::fabs(delta_x) > std::fabs(delta_y)) {
-            // X 方向越界：按窗口极限截断，Y 按比例缩放，减去一个 resolution_ 作为边界余量
-            end_p.x() = odom.p.x() + (delta_x/std::fabs(delta_x)) * (map_upp_.x() - resolution_);
-            end_p.y() = odom.p.y() + ((map_upp_.x() - resolution_)/std::fabs(delta_x)) * delta_y;
-        } else {
-            // Y 方向越界：按窗口极限截断，X 按比例缩放，减去一个 resolution_ 作为边界余量
-            end_p.x() = odom.p.x() + ((map_upp_.y() - resolution_)/std::fabs(delta_y)) * delta_x;
-            end_p.y() = odom.p.y() + (delta_y/std::fabs(delta_y)) * (map_upp_.y() - resolution_);
-        }
-    }
-    // start_p.z() = end_p.z(); // only for 2d path searching
-    // std::cout << "odom: " << odom_p_.transpose() << " end_p: " << end_p.transpose() << std::endl;
-
-    int point_num = 8;               // 极坐标采样数量（圆上等分）
-    double r = expand_fix_ / 2;      // 起点/终点落在占据内时的初始采样半径
-    if (local_astar_->CheckStartEnd(start_p) == false) {
-        ROS_INFO("\033[41;37m start point in obstacle \033[0m");
-        while (true) {
-            bool flag = false;
-            for(int i = 0; i < point_num; i++) {
-                Eigen::Vector3d pt;
-                // 在起点所在平面上按半径 r 进行圆周采样，寻找最近的可行起点
-                pt << start_p.x() + r*sin(M_PI*2*i/point_num), start_p.y() + r*cos(M_PI*2*i/point_num), start_p.z();
-                double dis_min = 10000.0;
-                double dis = (odom.p - pt).norm();
-                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
-                    dis_min = dis;
-                    start_p = pt;
-                    flag = true;
-                }
-            }
-            if (flag) {
-                ROS_INFO("\033[1;32m Change start goal! %f %f %f\033[0m", start_p.x(), start_p.y(), start_p.z());
-                break;
-            }
-            r += expand_fix_ / 2;   // 若本轮未找到可行点，增大采样半径重试
-        }
-    }
-    r = expand_fix_ / 2;             // 终点同样的极坐标采样修正逻辑
-    if (local_astar_->CheckStartEnd(end_p) == false) {
-        ROS_INFO("\033[41;37m end point in obstacle \033[0m");
-        while (true) {
-            bool flag = false;
-            for(int i = 0; i < point_num; i++) {
-                Eigen::Vector3d pt;
-                // 在终点所在平面上按半径 r 进行圆周采样，寻找最近的可行终点
-                pt << end_p.x() + r*sin(M_PI*2*i/point_num), end_p.y() + r*cos(M_PI*2*i/point_num), end_p.z();
-                double dis_min = 10000.0;
-                double dis = (odom.p - pt).norm();
-                if(local_astar_->CheckStartEnd(pt) == true && dis < dis_min) {
-                    dis_min = dis;
-                    end_p = pt;
-                    flag = true;
-                }
-            }
-            if (flag) {
-                ROS_INFO("\033[1;32m Change end goal! %f %f %f\033[0m", end_p.x(), end_p.y(), end_p.z());
-                break;
-            }
-            r += expand_fix_ / 2;   // 若本轮未找到可行点，增大采样半径重试
-        }
-    }
-
-    // 执行A*搜索
-    bool search_flag = local_astar_->SearchPath(start_p, end_p);
+    bool search_flag = PathSearch(start_pos, goal_pos, astar_path_);
     if (search_flag) {
-        local_astar_->GetPath(astar_path_);     // 获取原始节点路径
-        AstarPublish(astar_path_, 0, 0.1);      // 发布可视化：A*原始路径（黑色）
-
-        local_astar_->FloydHandle(astar_path_, waypoints_);  // Floyd 平滑/去冗余为关键路径点
-        // waypoints_.insert(waypoints_.begin(), odom_p_);
-        // 如果之前因为越界而截断了终点，且真实目标点在可行空间内，则把真实目标追加为最后关键点
-        if (add_goal_flag && local_astar_->CheckPoint(des.p)) waypoints_.push_back(des.p);
-        AstarPublish(waypoints_, 1, 0.1);       // 发布可视化：平滑路径关键点（绿色）
-
-        for (int i = 0; i < waypoints_.size()-1; i++) {
-            Eigen::Vector3d vector = waypoints_[i+1] - waypoints_[i];
-            // 按 path_dis_ 等间距插值，生成稠密跟踪路径
-            int num = vector.norm() / path_dis_; // 每 path_dis_ 米插入一个点
-            for (int j = 0; j < num; j++) {
-                Eigen::Vector3d pt = waypoints_[i] + vector * j / num;
-                follow_path_.push_back(pt);
+        //原始 A* 路径可视化（黑色小点）
+        AstarPublish(astar_path_, 0, 0.1);
+        //Floyd 简化
+        astar_ptr_->FloydHandle(astar_path_, waypoints_);  // Floyd 平滑/去冗余为关键路径点
+        // Floyd 结果可视化（红色稍大点）
+        AstarPublish(waypoints_, 1, 0.1);
+        // 3) 使用 path_dis_ 进行稠密插值
+        if (!waypoints_.empty()) {
+            follow_path_.push_back(waypoints_.front());
+            for (size_t i = 0; i + 1 < waypoints_.size(); ++i) {
+                Vec3f p0 = waypoints_[i];
+                Vec3f p1 = waypoints_[i + 1];
+                Vec3f seg = p1 - p0;
+                double seg_len = seg.norm();
+                if (seg_len < 1e-6) continue;
+                int inter_num = static_cast<int>(std::floor(seg_len / path_dis_));
+                // 只插入中间点，避免重复首尾
+                for (int k = 1; k < inter_num; ++k) {
+                    double ratio = double(k) / double(inter_num);
+                    follow_path_.push_back(p0 + seg * ratio);
+                }
+                follow_path_.push_back(p1);
             }
         }
+
         follow_path_.push_back(waypoints_.back());        // 确保包含终点
-        AstarPublish(follow_path_, 2, path_dis_);         // 发布可视化：稠密跟踪路径（蓝色）
+        // 稠密路径可视化（蓝色，点尺度使用 path_dis_）
+        AstarPublish(follow_path_, 2, path_dis_);
     } else {
         ROS_INFO("\033[41;37m No path! Stay at current point! \033[0m");
         // 搜索失败：保持当前位置为唯一跟踪点（保证下游模块有目标）
-        follow_path_.push_back(odom.p);
+        follow_path_.push_back(start_pos);
     }
 
     // 发布当前的最终跟踪目标为 Path 的末尾点（供其他模块使用/可视化）
@@ -1319,10 +1253,100 @@ void PlannerClass::PathReplan(bool extend,const Odom_Data_t& odom,const Desired_
     msg.pose.position.z = follow_path_.back().z();    
     goal_pub_.publish(msg);
 
-    ros::Time now = ros::Time::now();
-    local_astar_->Reset(); // 重置A*内部缓存（占据、开闭集等），避免下次重用旧状态
+    //ros::Time now = ros::Time::now();
+    // astar_ptr_->Reset(); // 重置A*内部缓存（占据、开闭集等），避免下次重用旧状态
     // std::cout << "astar reset time is: " << (ros::Time::now() - now).toSec()*1000 << " ms. " << std::endl;
 }
+
+bool PlannerClass::PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f &path)
+{
+    using namespace path_search; 
+    
+
+    // ---------- Step 1: 起点类型检测 ----------
+    //确保起终点在地图内并且不在障碍物内
+    //起点检查
+    rog_map::GridType start_type = map_ptr_->getGridType(start_pt);
+    if (start_type == rog_map::GridType::OCCUPIED || // 起点在障碍内部
+        start_type == rog_map::GridType::OUT_OF_MAP) { // 或者越界
+        ROS_WARN("-- [SUPER] The start point in obstacle, this should not happen since the start point should be shift before pathsearch.");
+        return false; // 直接返回, 上层需处理此不一致状态
+    }
+    // 临时容器: 逃逸路径(起点若需移动到最近自由点时的路径段)
+    vec_E<Vec3f> start_point_escape_path;
+
+    // flag_es: 在概率地图(PROB_MAP)上执行逃逸搜索, 根据参数将 UNKNOWN 视作 OCCUPIED 或 FREE
+    int flag_es = ON_PROB_MAP | (param.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE);
+    vec_Vec3f out_path; // 暂存逃逸搜索输出
+    RET_CODE ret_es = astar_ptr_->escapePathSearch(start_pt, flag_es, out_path);
+    if (ret_es != NO_NEED) { // 有需要进行逃逸处理
+        if (ret_es != REACH_HORIZON && ret_es != REACH_GOAL) { // 逃逸失败
+            ROS_ERROR(" -- [SUPER] Escape path search failed with [%s], force return.", 
+                    RET_CODE_STR[ret_es].c_str());
+            return false;
+        } else {
+            // 逃逸成功, 保存结果(此处的 out_path 已按时间/几何顺序排列)
+            start_point_escape_path = out_path;
+        }
+    }
+
+    // 若逃逸路径非空, 将起点平移至逃逸路径末端; 否则保持原始 start_pt
+    Vec3f shifted_start_pt = start_point_escape_path.empty() ? start_pt : start_point_escape_path.back();
+
+    // ---------- Step 2: 在膨胀地图(INF_MAP)进行主路径搜索 ----------
+    // flag 组合: 使用膨胀地图 + 未知区域处理策略 + 不使用膨胀点邻居(初次搜索更严格减少搜索空间)
+    int flag = ON_INF_MAP | (param.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) | DONT_USE_INF_NEIGHBOR;
+
+    // 主路径搜索: 起点 -> 目标
+    RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(shifted_start_pt,
+                                                            goal,
+                                                            flag,
+                                                            path);
+    if (ret_code == INIT_ERROR) { // A* 初始化失败, 标记目标无效并返回
+        gi_.goal_valid = false;
+        return false;
+    }
+    // ---------- Step 3: 回退策略 ----------
+    // 若在膨胀地图上无法找到路径, 切换到概率地图并开放膨胀点邻居(扩大搜索空间)再次尝试
+    if (ret_code == NO_PATH) {
+        flag = ON_PROB_MAP | (param.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) | USE_INF_NEIGHBOR;
+        //使用ROS_INFO打印带颜色的日志
+        ROS_INFO("\033[31;1m -- [Astar] Path search failed on inf map, try again on prob map.\033[0m");
+        ret_code = astar_ptr_->pointToPointPathSearch(shifted_start_pt, goal, flag, path);
+        if (ret_code == SUCCESS || ret_code == REACH_HORIZON || ret_code == REACH_GOAL) {
+            ROS_INFO("\033[32;1m -- [Astar] Path search on prob map success.\033[0m");
+        } else {
+            ROS_ERROR("\033[31;1m -- [Astar] Path search failed on prob map still failed.\033[0m");
+        }
+    }
+    // ---------- Step 4: 成功码验证 ----------
+    // 允许的成功状态: REACH_HORIZON (达到搜索边界) 或 REACH_GOAL (达到目标)
+    if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL) {
+        ROS_ERROR(" -- [SUPER] Path search failed with [%s], force return.", RET_CODE_STR[ret_code].c_str());
+        return false;
+    }
+    // ---------- Step 5: 拼接逃逸路径与主路径 ----------
+    if (!start_point_escape_path.empty()) {
+        // 将逃逸路径插入 path 开头(保持先后顺序)
+        path.insert(path.begin(), start_point_escape_path.begin(), start_point_escape_path.end());
+    }
+
+    // 若主路径为空(极端情况, 例如仅返回逃逸路径或搜索失败未及早返回), 进行保护性检查
+    if (path.empty()) {
+        ROS_WARN(" -- [SUPER] Path search failed with empty segments, force return.");
+        return false;
+    }
+
+    // 保证原始 start_pt 是第一个元素, 方便上层模块进行相对计算(如速度/时间戳关联)
+    path.insert(path.begin(), start_pt);
+
+    // 到达目标时附加 goal 点, 保持路径语义完整
+    if (ret_code == REACH_GOAL) {
+        path.push_back(goal);
+    }
+    return true;
+}
+
 void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
 {
     // 使用 CorridorGenerator 的 GeneratePolytopeFromLine 方法
@@ -1364,17 +1388,18 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
-        // 路径规划触发逻辑
+        EvaluateReplan();
+        //路径规划触发逻辑
         if (new_goal_flag_) {
             // 新目标点：执行完整路径规划（扩展模式）
             new_goal_flag_ = false;
             replan_flag_ = false;
-            PathReplan(true,odom,des);
+            PathReplan(odom.p,des.p);
         }
         if (new_goal_flag_ == false && replan_flag_) {
             // 障碍物触发：执行局部重规划（非扩展模式）
             replan_flag_ = false;
-            PathReplan(false,odom,des);
+            PathReplan(odom.p,des.p);
         }
         log_times_[1] = (ros::Time::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
 
@@ -1446,11 +1471,20 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             // 尝试生成更长的SFC覆盖MPC剩余地平线
             int end_index = first_id + (mpc_->MPC_HORIZON-mpc_goal_index) * ref_dis_;
             if (end_index >= follow_path_.size()) end_index = follow_path_.size() - 1;
-            
+            // 使用 rog_map 可用接口进行安全性检测（点可达 + 线段无碰）
+            auto point_passable = [&](const Vec3f &p) -> bool {
+                auto gt = map_ptr_->getGridType(p);
+                if (gt == rog_map::GridType::OCCUPIED || gt == rog_map::GridType::OUT_OF_MAP)
+                    return false;
+                if (param.frontend_in_known_free && gt == rog_map::GridType::UNKNOWN)
+                    return false; // 在“仅已知区域”策略下，未知视作不可达
+                return true;
+            };
+
             for (int i = end_index; i >= first_id && mpc_goal_index < mpc_->MPC_HORIZON - 1; i--) {
                 // 检查路径点安全性和连通性
-                if (local_astar_->CheckPoint(follow_path_[i]) == false) continue;
-                if (local_astar_->CheckLineObstacleFree(follow_path_[first_id], follow_path_[i]) == false) continue;
+                if (!point_passable(follow_path_[i])) continue;
+                if (!astar_ptr_->CheckLineObstacleFree(follow_path_[first_id], follow_path_[i])) continue;
                 
                 i = i - 0.2 / path_dis_;  // 回退确保安全
                 if (i <= first_id) break;
@@ -1501,7 +1535,8 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             mpc_goals_.push_back(follow_path_[index]);
             
         }
-        AstarPublish(mpc_goals_, 3, 0.1);  // 发布MPC目标点可视化
+        //发布目标点可视化
+        AstarPublish(mpc_goals_,3,0.1);
 
         // // === 偏航角控制 ===
         // if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
@@ -1544,65 +1579,14 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     }
     log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
-
-// //sub topic
-// void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
-// {
-//     local_pc_mutex_.lock();
-
-//     ros::Time now = ros::Time::now();
-//     local_pc_.clear();
-//     pcl::PointCloud<pcl::PointXYZ> cloud;
-//     pcl::fromROSMsg(*msg, cloud);
-
-//     vec_cloud_.push_back(cloud);
-//     if (vec_cloud_.size() > 10) vec_cloud_.pop_front();
-//     static_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
-//     for (int i = 0; i < vec_cloud_.size(); i++) *static_cloud_ += vec_cloud_[i];
-    
-//     pcl::CropBox<pcl::PointXYZ> cb; // CropBox filter (delete unuseful points)
-//     cb.setMin(Eigen::Vector4f(odom_data.p.x() - (map_upp_.x()-0.5), odom_data.p.y() - (map_upp_.y()-0.5), 0.2, 1.0));
-//     cb.setMax(Eigen::Vector4f(odom_data.p.x() + (map_upp_.x()-0.5), odom_data.p.y() + (map_upp_.y()-0.5), map_upp_.z(), 1.0));
-//     cb.setInputCloud(static_cloud_);
-//     cb.filter(*static_cloud_);
-//     pcl::VoxelGrid<pcl::PointXYZ> vf;
-//     pcl::PointCloud<pcl::PointXYZ>::Ptr cur_cloud_ds(new pcl::PointCloud<pcl::PointXYZ>());
-//     Eigen::Vector3f pos = odom_data.p.cast<float>();
-//     vf.setLeafSize(0.2, 0.2, 0.2);
-//     vf.setInputCloud(static_cloud_);
-//     vf.filter(static_map_);
-//     for(auto &point: static_map_.points) {
-//         local_pc_.push_back(Eigen::Vector3d(point.x, point.y, point.z));
-//     }
-
-//     // update astar map
-//     static int obs_count = 0;
-//     local_astar_->SetCenter(Eigen::Vector3d(odom_data.p.x(), odom_data.p.y(), 0.0));
-//     local_astar_->setObsVector(local_pc_, expand_fix_);
-//     std::vector<Eigen::Vector3d> remain_path;
-//     remain_path.insert(remain_path.begin(), follow_path_.begin()+astar_index_, follow_path_.end());
-//     if (local_astar_->CheckPathFree(remain_path) == false) replan_flag_ = true;
-//     // bool flag = local_astar_->CheckPathFree(follow_path_);     // check path is free or not
-//     // if (flag == false) obs_count++;
-//     // else obs_count = 0;
-//     // if (obs_count >= 2) {
-//     //     obs_count = 0;
-//     //     replan_flag_ = true;
-//     // }
-    
-//     local_astar_->GetOccupyPcl(cloud);
-//     cloud.width = cloud.points.size();
-//     cloud.height = 1;
-//     cloud.is_dense = true;
-//     sensor_msgs::PointCloud2 map_msg;
-//     pcl::toROSMsg(cloud, map_msg);
-//     map_msg.header.frame_id = "map";
-//     gird_map_pub_.publish(map_msg);
-
-//     log_times_[0] = (ros::Time::now() - now).toSec() * 1000.0;
-
-//     local_pc_mutex_.unlock();
-// }
+void PlannerClass::EvaluateReplan()
+{
+    // evaluate whether need replan
+    vec_Vec3f remain_path;
+    int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size()));
+    remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
+    if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+}
 
 void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw)
 {
