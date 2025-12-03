@@ -16,14 +16,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "low_voltage", low_voltage);
 
 	read_essential_param(nh, "ctrl_delay", ctrl_delay);
-	read_essential_param(nh, "sfc/sfc_dis", sfc_dis);
-	read_essential_param(nh, "sfc/box_min_x", box_min.x());
-	read_essential_param(nh, "sfc/box_min_y", box_min.y());
-	read_essential_param(nh, "sfc/box_min_z", box_min.z());
-	read_essential_param(nh, "sfc/box_max_x", box_max.x());
-	read_essential_param(nh, "sfc/box_max_y", box_max.y());
-	read_essential_param(nh, "sfc/box_max_z", box_max.z());
-	
+
 	read_essential_param(nh, "thrust_limit", thrust_limit);
 	read_essential_param(nh, "hover_esti", hover_esti_flag);
 	read_essential_param(nh, "hover_perc", hover_perc);
@@ -41,18 +34,12 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "visualization_en", visualization_en);
 	read_essential_param(nh, "corridor_bound_dis", corridor_bound_dis);
 	read_essential_param(nh, "corridor_line_max_length", corridor_line_max_length);
-	read_essential_param(nh, "safe_corridor_line_max_length", safe_corridor_line_max_length);
 	read_essential_param(nh, "frontend_in_known_free", frontend_in_known_free);
 	read_essential_param(nh, "iris_iter_num", iris_iter_num);
 	read_essential_param(nh, "obs_skip_num", obs_skip_num);
-	read_essential_param(nh, "replan_forward_dt", replan_forward_dt);
-	read_essential_param(nh, "planning_horizon", planning_horizon);
-	read_essential_param(nh, "sensing_horizon", sensing_horizon);
-	read_essential_param(nh, "receding_dis", receding_dis);
 	read_essential_param(nh, "robot_r", robot_r);
 	read_essential_param(nh, "ref_dis", ref_dis);
 	read_essential_param(nh, "path_dis", path_dis);
-
 
 	read_essential_param(nh, "msg_timeout/odom", msg_timeout.odom);
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);

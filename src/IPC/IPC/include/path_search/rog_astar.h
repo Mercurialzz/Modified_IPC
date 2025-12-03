@@ -231,5 +231,6 @@ namespace path_search {
      */
     bool CheckPathFree(const rog_map::vec_Vec3f &path);
 
+    bool CheckPointFree(const rog_map::Vec3f &point);
     };
 }

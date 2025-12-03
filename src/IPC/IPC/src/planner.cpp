@@ -18,9 +18,6 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     simu_flag_ = param.simu_flag;
     perfect_simu_flag_ = param.perfect_simu_flag;
     ctrl_delay_ = param.ctrl_delay;
-    sfc_dis_ = param.sfc_dis;
-    box_max_ = param.box_max;
-    box_min_ = param.box_min;
     thrust_limit_ = param.thrust_limit;
     hover_esti_flag_ = param.hover_esti_flag;
     hover_perc_ = param.hover_perc;
@@ -32,15 +29,6 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
 
 
     goal_p_ = Eigen::Vector3d(param.goal_x, param.goal_y, param.goal_z);
-
-    resolution_ = param.resolution;
-    expand_dyn_ = param.expand_dyn;
-    expand_fix_ = param.expand_fix;
-    Eigen::Vector3d map_low, map_upp;
-
-    map_low << -param.map_size.x()/2.0, -param.map_size.y()/2.0, 0.0;
-    map_upp << param.map_size.x()/2.0, param.map_size.y()/2.0, param.map_size.z()/2.0;
-    map_upp_ = map_upp;
 
     path_dis_ = param.path_dis;
     ref_dis_ = param.ref_dis;
@@ -152,10 +140,10 @@ void PlannerClass::StateUpdate(void)
             std::lock_guard<std::mutex> lock(goal_mutex_);
             goal_p_ = goal_data.new_goal;
             
-            if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
-            if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
+            // if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
+            // if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
             new_goal_flag_ = true;
-            goal_p_.z() = 2.5;
+            goal_p_.z() = param.goal_z;
             ROS_INFO("[px4ctrl] New goal received: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
         }
         // new_goal_flag_ = false;
@@ -553,9 +541,21 @@ void PlannerClass::process()
             //MPCSetGoal(des.p, des.v, des.a, des.yaw);
             CmdMode(odom_data,des);
         }
-        ROS_INFO_THROTTLE(1,"[px4ctrl] MPC Goal Pos: %.2f, %.2f, %.2f",des.p.x(),des.p.y(),des.p.z());
-        MpcCalculate(odom_data, imu_data, u);
+        MpcCalculate(odom_data,imu_data,u);
     }
+
+        // if (new_goal_flag_) {
+        //     // 新目标点：执行完整路径规划（扩展模式）
+        //     new_goal_flag_ = false;
+        //     replan_flag_ = false;
+        //     PathReplan(odom_data.p,goal_p_);
+        // }
+        // if (new_goal_flag_ == false && replan_flag_) {
+        //     // 障碍物触发：执行局部重规划（非扩展模式）
+        //     replan_flag_ = false;
+        //     PathReplan(odom_data.p,goal_p_);
+        // }
+
 
     // Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
     // // GenerateAPolytopeFromPoint(odom_data.p,planes, 0);
@@ -1379,7 +1379,7 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
     bool success = corridor_gen_->GeneratePolytopeFromPoint(point, polytope);
     
     if (success) {
-        ROS_INFO_THROTTLE(1.0, "[Planner] GeneratePolytopeFromPoint succeeded.");
+        // ROS_INFO_THROTTLE(1.0, "[Planner] GeneratePolytopeFromPoint succeeded.");
         if(index == 0) vis_ptr_->vizCurSfc(polytope);
         planes = polytope.GetPlanes();
     } else {
@@ -1390,7 +1390,7 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
-        EvaluateReplan();
+        // EvaluateReplan();
         //路径规划触发逻辑
         if (new_goal_flag_) {
             // 新目标点：执行完整路径规划（扩展模式）
@@ -1411,11 +1411,26 @@ void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des)
 {
     // === 安全飞行走廊(SFC)生成和MPC目标设置 ===
+    // 本函数的职责：
+    // 1) 基于当前跟踪路径 follow_path_ 与当前位置 odom.p，生成若干 SFC（Safe Flight Corridor）。
+    //    SFC 用若干平面组成的凸多面体来约束 MPC 的未来位置，确保优化解在安全空间内。
+    // 2) 依据 SFC 覆盖范围与路径采样，为 MPC 设置每个预测步的参考位置/速度。
+    // 3) 同时设置偏航参考 yaw_r_ 用于下游姿态控制。
+    // 关键变量解释：
+    // - follow_path_: 由 A* + Floyd + 插值生成的稠密路径点（世界系）。
+    // - astar_index_: 当前“路径最近点”的索引，用于确定跟踪起点。
+    // - ref_dis_: MPC 步之间沿路径的索引步长（类似采样间距的步数单位）。
+    // - goal_in_sfc: 在当前 SFC 约束下，参考点允许到达的路径上“最远的索引”。
+    // - GenerateAPolytopeFromPoint/Line: 基于点/线生成走廊多面体平面集合。
+    // - mpc_->SetFSC(planes, i): 将第 i 个预测步的约束设置为 planes 所定义的凸多面体。
+    // 注意：SFC 太“紧”或“排斥当前状态/参考”会使求解器报告 Primal Infeasible。
+    //       下面的流程通过“先点后线、逐步扩展、必要回退”的策略降低不一致风险。
     ros::Time sfc_start = ros::Time::now();
     if (follow_path_.size() > 0) { // 存在有效路径
         have_path_ = true;
         last_have_path_ = true;
-        // 寻找路径上距离当前位置最近的点
+        // Step-A: 寻找路径上距离当前位置最近的点，作为跟踪起点
+        //         注意：最近点的离散抖动会导致参考索引整体平移，必要时可加滞后/滤波。
         double min_dis = 10000.0;
         for (int i = 0; i < follow_path_.size(); i++) { 
             double dis = (odom.p - follow_path_[i]).norm();
@@ -1425,9 +1440,13 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             }
         }
 
+        // Step-B: 计算走廊与覆盖范围（goal_in_sfc）
+        //         根据当前是否接近末端、以及初始点生成的多面体，逐步扩展 SFC。
+        //         goal_in_sfc 用于约束参考生成不超出安全覆盖。
         int goal_in_sfc = astar_index_;
         if (follow_path_.size() - astar_index_ <= ref_dis_) { 
-            // 接近路径终点：在当前位置生成SFC
+            // Case-1: 接近路径终点 → 在当前位置生成“点型”SFC，约束整条 horizon。
+            // 该策略可防止末端“跳出安全区域”，简化为单一走廊约束。
             goal_in_sfc = follow_path_.size();
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
             GenerateAPolytopeFromPoint(odom.p, planes, 0);
@@ -1435,73 +1454,73 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 mpc_->SetFSC(planes, i);  // 为整个MPC预测地平线设置相同SFC
             }
         } else { 
-            // 正常路径跟踪：寻找最大最长的SFC
+            // Case-2: 正常路径跟踪 → 先用“点型”SFC保护起始段，再尝试生成更长的“线型”SFC覆盖后段。
+            // 设计动机：
+            //   - 点型 SFC 易确保当前状态在走廊内，降低 infeasible 风险；
+            //   - 在线型 SFC 扩展时，逐段验证连通性与安全，尽量扩大可行域。
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes, last_planes;
-            GenerateAPolytopeFromLine(follow_path_[astar_index_], follow_path_[astar_index_], planes, 0); 
+            // GenerateAPolytopeFromLine(follow_path_[astar_index_], follow_path_[astar_index_], planes, 0); 
+            GenerateAPolytopeFromPoint(follow_path_[astar_index_], planes, 0);
             last_planes = planes;
             int init_num = 0;
             
-            // 检查当前位置是否在初始SFC内
+            // 检查当前位置是否在初始SFC内：若不在，则前段预测步需要“初始化跳过”几步，避免一开始就不可行。
             if (mpc_->IsInFSC(odom.p, planes) == false) { 
                 init_num = (odom.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
                 ROS_INFO("\033[35m UAV is out sfc! init num is %d \033[0m", init_num);
             }
             
-            // 寻找第一个SFC能覆盖的最远路径点
+            // 找到第一个点型 SFC 能覆盖的最远路径点 first_id（作为“短走廊”的终点）
             int first_id = astar_index_, mpc_goal_index = 0;
             for (int i = first_id+1; i < follow_path_.size(); i++) { 
                 if (mpc_->IsInFSC(follow_path_[i], planes)) {
                     first_id = i;
                     goal_in_sfc = i;
                 } else {
-                    // 回退一点确保安全
+                    // 回退一点确保安全：避免刚好落在边界外导致下一步不可行
                     first_id -= 0.2 / path_dis_;
                     if (first_id < astar_index_) first_id = astar_index_;
                     break;
                 }
             }
             
-            // 计算第一个SFC在MPC地平线中的终止索引
+            // 计算第一个 SFC 在 MPC 地平线中的终止索引（从 init_num 开始到 mpc_goal_index 为“短走廊”步）
             mpc_goal_index = (first_id - astar_index_) / ref_dis_ + init_num + 1;
             assert(first_id >= astar_index_);
             
-            // 为MPC前段步骤设置第一个SFC
+            // 为 MPC 前段步骤设置点型 SFC：先保障“短走廊”段在安全内
             for (int i = init_num; i <= mpc_goal_index && i < mpc_->MPC_HORIZON; i++) {
                 mpc_->SetFSC(planes, i);
             }
             
-            // 尝试生成更长的SFC覆盖MPC剩余地平线
+            // 尝试生成更长的“线型”SFC覆盖 MPC 剩余地平线：
+            // - 先选潜在的远端索引 end_index
+            // - 用点可达检查 + 线段无碰检查过滤不安全的终点
+            // - 生成线型走廊并覆盖后段；若失败则回退为点型走廊
             int end_index = first_id + (mpc_->MPC_HORIZON-mpc_goal_index) * ref_dis_;
             if (end_index >= follow_path_.size()) end_index = follow_path_.size() - 1;
-            // 使用 rog_map 可用接口进行安全性检测（点可达 + 线段无碰）
-            auto point_passable = [&](const Vec3f &p) -> bool {
-                auto gt = map_ptr_->getGridType(p);
-                if (gt == rog_map::GridType::OCCUPIED || gt == rog_map::GridType::OUT_OF_MAP)
-                    return false;
-                if (param.frontend_in_known_free && gt == rog_map::GridType::UNKNOWN)
-                    return false; // 在“仅已知区域”策略下，未知视作不可达
-                return true;
-            };
 
             for (int i = end_index; i >= first_id && mpc_goal_index < mpc_->MPC_HORIZON - 1; i--) {
-                // 检查路径点安全性和连通性
-                if (!point_passable(follow_path_[i])) continue;
+                // 检查路径点安全性和连通性：逐候选点向前回退，寻找可用的线型走廊终点
+                if (!astar_ptr_->CheckPointFree(follow_path_[i])) continue;
                 if (!astar_ptr_->CheckLineObstacleFree(follow_path_[first_id], follow_path_[i])) continue;
                 
-                i = i - 0.2 / path_dis_;  // 回退确保安全
+                i = i - 0.2 / path_dis_;  // 回退确保安全，避免刚性边界造成不可行
                 if (i <= first_id) break;
                 
-                // 生成长距离SFC
+                // 生成长距离线型 SFC：用首尾两点作为“种子线”生成更大可行域
                 Eigen::Matrix<double, Eigen::Dynamic, 4> long_planes;
-                GenerateAPolytopeFromLine(follow_path_[first_id], follow_path_[i], long_planes, 1);
+                GenerateAPolytopeFromLine(follow_path_[first_id], follow_path_[i], long_planes, 0);
+
+                // ROS_INFO("Generated long SFC from index %d to %d", first_id, i);
                 if (long_planes.rows() > 0) {
-                    // 为MPC后段步骤设置长SFC
+                    // 为 MPC 后段步骤设置长 SFC，并更新覆盖范围 goal_in_sfc（用于参考点不越界）
                     for (int j = mpc_goal_index+1; j < mpc_->MPC_HORIZON; j++) {
                         mpc_->SetFSC(long_planes, j);
                     }
                     mpc_goal_index = mpc_->MPC_HORIZON;
                     
-                    // 更新长SFC覆盖的目标范围
+                    // 更新长SFC覆盖的目标范围：在 long_planes 内的最后一个路径索引作为新的 goal_in_sfc
                     for (int k = first_id; k < follow_path_.size(); k++) {
                         if (mpc_->IsInFSC(follow_path_[k], long_planes)) goal_in_sfc = k;
                         else break;
@@ -1510,25 +1529,28 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 }
             }
             
-            // 为剩余MPC步骤设置原始SFC
+            // 若未成功生成更长线型 SFC，则为剩余步设置原始点型 SFC（last_planes）作为保底约束
             for (int i = mpc_goal_index+1; i < mpc_->MPC_HORIZON; i++) {
                 if (last_planes.rows() > 0) mpc_->SetFSC(last_planes, i);
             }
         }
         // === MPC参考轨迹设置 ===
+        // 基于 goal_in_sfc 限制，生成每个预测步的参考位置与速度：
+        // - 位置：顺着路径按 ref_dis_ 递进，不超过 goal_in_sfc 与路径末端。
+        // - 速度：第一步用 (目标-当前)/dt，中间步用相邻参考点差分，最后一步置零（便于收敛）。
         mpc_goals_.clear();
         Eigen::Vector3d last_p_ref;
 
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
             // 计算MPC每步的参考位置索引
             int index = astar_index_ + i * ref_dis_;
-            if (index >= goal_in_sfc) index = goal_in_sfc;      // 不超过SFC覆盖范围
+            // if (index >= goal_in_sfc) index = goal_in_sfc;      // 不超过SFC覆盖范围
             if (index >= follow_path_.size()) index = follow_path_.size() - 1;  // 不超过路径长度
             
             //计算参考速度
             Eigen::Vector3d v_r(0, 0, 0);
             if (i == 0) v_r = (follow_path_[index] - odom.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
-            else if (i == mpc_->MPC_HORIZON) v_r.setZero();                           // 最后一步：速度为零
+            else if (i == mpc_->MPC_HORIZON - 1) v_r.setZero();                           // 最后一步：速度为零
             else v_r = (follow_path_[index] - last_p_ref) / mpc_->MPC_STEP;           // 中间步：点间速度
             last_p_ref = follow_path_[index];
 
@@ -1540,32 +1562,36 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         //发布目标点可视化
         AstarPublish(mpc_goals_,3,0.1);
 
-        // // === 偏航角控制 ===
-        // if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
-        //     // 偏航角指向路径终点方向
-        //     yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
-        // }
         // === 偏航角控制 ===
+        // 此处采用“偏航指向路径终点方向”的简化策略；
+        // 若需更稳定的航向控制，可用“动态前瞻切线 + 终点融合 + 变化率限幅”的策略（见先前建议）。
         // 航向指向路径切线方向：从当前位置在路径上取一个前瞻点，计算二维方向
         if (follow_path_.size() >= 2) {
-            // 前瞻距离 L（米），可按需要调大/调小：大则更“看远”，小则更贴合当前弯道
-            const double L = std::max(0.2, 3.0 * path_dis_);   // 例如 0.5 m 或 3*path_dis_
-            const int lookahead_steps = std::max(1, int(L / path_dis_));
-
-            const int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
-            const int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
-
-            const Eigen::Vector2d dir(
-                follow_path_[i1].x() - follow_path_[i0].x(),
-                follow_path_[i1].y() - follow_path_[i0].y()
-            );
-
-            if (dir.norm() > 1e-3) {
-                yaw_r_ = std::atan2(dir.y(), dir.x());
+            if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
+                // 偏航角指向路径终点方向
+                yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
             }
-            // 若方向极短则保持当前 yaw_r_ 不变，避免抖动
+            // // 前瞻距离 L（米），可按需要调大/调小：大则更“看远”，小则更贴合当前弯道
+            // const double L = std::max(0.2, 3.0 * path_dis_);   // 例如 0.5 m 或 3*path_dis_
+            // const int lookahead_steps = std::max(1, int(L / path_dis_));
+
+            // const int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
+            // const int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
+
+            // const Eigen::Vector2d dir(
+            //     follow_path_[i1].x() - follow_path_[i0].x(),
+            //     follow_path_[i1].y() - follow_path_[i0].y()
+            // );
+
+            // if (dir.norm() > 1e-3) {
+            //     yaw_r_ = std::atan2(dir.y(), dir.x());
+            // }
+            // // 若方向极短则保持当前 yaw_r_ 不变，避免抖动
         }
     } else { 
+        // 无有效路径：
+        // - 维持当前位置的参考，避免 MPC 追踪到不可预期点；
+        // - yaw_r_ 保持当前航向。
         have_path_ = false;
         static double yaw_now;
         if(have_path_ != last_have_path_) {
@@ -1596,4 +1622,15 @@ void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vecto
         mpc_->SetGoal(goal_pos, goal_vel, goal_acc, i);
     }
     yaw_r_ = yaw;
+}
+
+void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
+{
+    local_pc_mutex_.lock();
+
+    // update astar map
+    EvaluateReplan();
+
+    local_pc_mutex_.unlock();
+
 }

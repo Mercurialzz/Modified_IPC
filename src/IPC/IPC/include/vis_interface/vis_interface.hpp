@@ -44,7 +44,7 @@ namespace vis_interface {
             committed_traj_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/committed_traj", 100);
 
             exp_sfcs_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/exp_sfc", 100);
-            sfc_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/backup_sfc", 100);
+            sfc_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/ipc_sfc", 100);
 
             guide_path_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/frontend_path", 100);
 

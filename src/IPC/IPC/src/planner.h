@@ -155,6 +155,7 @@ public:
 	bool get_landed() { return takeoff_land.landed; }
     bool judge_in_fence();
     bool judge_close_to_fence();
+	void LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg);
 
 private:
 	State_t state; // Should only be changed in PlannerClass::process() function!
@@ -171,10 +172,9 @@ private:
 	// std::shared_ptr<PlannerClass> planner_;
 	bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
 	bool simu_flag_, perfect_simu_flag_, hover_esti_flag_, yaw_ctrl_flag_;
-	double resolution_;
 	double ctrl_delay_;
     double thrust_limit_, hover_perc_;
-	double sfc_dis_, path_dis_, expand_dyn_, expand_fix_;
+	double path_dis_;
 	int ref_dis_;
 	int mpc_ctrl_index_;
     std::vector<Eigen::Vector3d> remain_nodes_;
@@ -184,8 +184,7 @@ private:
 	ros::Time last_mpc_time_;
 	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_;
 
-	Eigen::Vector3d goal_p_, map_upp_;
-	Eigen::Vector3d box_min_, box_max_;
+	Eigen::Vector3d goal_p_;
 	Eigen::Vector3d rate_;
 	double yaw_{0}, yaw_r_{0}, yaw_dot_r_{0}, yaw_gain_;
 	double init_yaw_{0};
@@ -270,6 +269,7 @@ private:
 	bool PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f &path);
 	void PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal);
 	void EvaluateReplan();
+	
 };
 
 #endif

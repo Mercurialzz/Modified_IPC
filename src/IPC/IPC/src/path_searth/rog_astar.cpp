@@ -889,6 +889,14 @@ namespace path_search {
         }
         return true;
     }
+    bool Astar::CheckPointFree(const rog_map::Vec3f &point) {
+        if (!insideLocalMap(point)) return true; // 局部地图外不判定为阻塞
+        rog_map::GridType gt = md_.use_inf_map ? map_ptr_->getInfGridType(point) : map_ptr_->getGridType(point);
+        if (gt == OCCUPIED || gt == OUT_OF_MAP) return false;
+        if (md_.unknown_as_occ && gt == UNKNOWN) return false;
+        return true;
+    }
+
     bool Astar::CheckPathFree(const rog_map::vec_Vec3f& path) {
         if (path.empty()) return true;
 
@@ -905,19 +913,12 @@ namespace path_search {
             if (is_blocked_point(pt)) return false;
         }
 
-        // 2) 相邻段直线采样检查
-        for (size_t i = 0; i + 1 < path.size(); ++i) {
-            const rog_map::Vec3f &p1 = path[i];
-            const rog_map::Vec3f &p2 = path[i + 1];
-            rog_map::Vec3f vec = p2 - p1;
-            double len = vec.norm();
-            if (len < 1e-6) continue;
-            int sample_num = std::max(1, int(len / std::max(1e-3, md_.resolution)));
-            for (int s = 1; s <= sample_num; ++s) {
-                rog_map::Vec3f pos = p1 + vec * (double(s) / (sample_num + 1));
-                if (is_blocked_point(pos)) return false;
-            }
-        }
+        // // 2) 相邻段直线采样检查
+        // for (size_t i = 0; i + 1 < path.size(); ++i) {
+        //     const rog_map::Vec3f &p1 = path[i];
+        //     const rog_map::Vec3f &p2 = path[i + 1];
+        //     if (!CheckLineObstacleFree(p1, p2)) return false;
+        // }
         return true;
     }
 }

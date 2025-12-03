@@ -106,7 +106,15 @@ Visualization Manager:
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /mkr_arr
+      Marker Topic: /ipc_node/visualization/ipc_sfc
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Queue Size: 4
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /ipc_node/rog_map/map_bound
       Name: MarkerArray
       Namespaces:
         {}
@@ -211,10 +219,10 @@ Visualization Manager:
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
-      Size (Pixels): 5
+      Size (Pixels): 4
       Size (m): 0.20000000298023224
       Style: Points
-      Topic: /astar/grid_map
+      Topic: /ipc_node/rog_map/inf_occ
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
