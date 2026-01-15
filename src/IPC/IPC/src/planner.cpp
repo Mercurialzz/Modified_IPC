@@ -1217,7 +1217,7 @@ void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vecto
         //Floyd 简化
         astar_ptr_->FloydHandle(astar_path_, waypoints_);  // Floyd 平滑/去冗余为关键路径点
         // Floyd 结果可视化（红色稍大点）
-        AstarPublish(waypoints_, 1, 0.1);
+        AstarPublish(waypoints_, 1, 0.2);
         // 3) 使用 path_dis_ 进行稠密插值
         if (!waypoints_.empty()) {
             follow_path_.push_back(waypoints_.front());
@@ -1361,7 +1361,11 @@ void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d
     bool success = corridor_gen_->GeneratePolytopeFromLine(seed_line, polytope);
     
     if (success) {
-        if(index == 0) vis_ptr_->vizCurSfc(polytope);
+        if(index == 0) 
+        {
+            vis_ptr_->vizCurSfc(polytope);
+            
+        }
         planes = polytope.GetPlanes();
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
@@ -1390,7 +1394,7 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
-        // EvaluateReplan();
+        EvaluateReplan();
         //路径规划触发逻辑
         if (new_goal_flag_) {
             // 新目标点：执行完整路径规划（扩展模式）
@@ -1510,8 +1514,11 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 
                 // 生成长距离线型 SFC：用首尾两点作为“种子线”生成更大可行域
                 Eigen::Matrix<double, Eigen::Dynamic, 4> long_planes;
+                ros::Time gen_start = ros::Time::now();
                 GenerateAPolytopeFromLine(follow_path_[first_id], follow_path_[i], long_planes, 0);
-
+                // log_times_[2] += (ros::Time::now() - gen_start).toSec() * 1000.0;
+                //ROS_INFO( "[Planner] Long SFC generation time: %.2f ms", (ros::Time::now() - gen_start).toSec() * 1000.0);
+                
                 // ROS_INFO("Generated long SFC from index %d to %d", first_id, i);
                 if (long_planes.rows() > 0) {
                     // 为 MPC 后段步骤设置长 SFC，并更新覆盖范围 goal_in_sfc（用于参考点不越界）
@@ -1567,26 +1574,39 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         // 若需更稳定的航向控制，可用“动态前瞻切线 + 终点融合 + 变化率限幅”的策略（见先前建议）。
         // 航向指向路径切线方向：从当前位置在路径上取一个前瞻点，计算二维方向
         if (follow_path_.size() >= 2) {
-            if (astar_index_ < follow_path_.size() - 0.3 / path_dis_) {
-                // 偏航角指向路径终点方向
-                yaw_r_ = std::atan2(follow_path_.back().y()-odom.p.y(), follow_path_.back().x()-odom.p.x());
+            // 使用路径切线/前瞻点来确定偏航：比指向终点更能反映局部轨迹方向
+            // L: 前瞻距离（米），按 path_dis_ 比例选择（可调）
+            const double L = std::max(0.2, 3.0 * path_dis_);
+            const int lookahead_steps = std::max(1, int(L / path_dis_));
+
+            // i0: 当前参考点索引（取 astar_index_，确保不越界）
+            int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
+            int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
+
+            Eigen::Vector2d dir(
+                follow_path_[i1].x() - follow_path_[i0].x(),
+                follow_path_[i1].y() - follow_path_[i0].y()
+            );
+
+            if (dir.norm() > 1e-3) {
+                double yaw_target = std::atan2(dir.y(), dir.x());
+
+                // 对 yaw 变化进行解缠和速率限制，避免剧烈跳变
+                double yaw_error = yaw_target - yaw_r_;
+                while (yaw_error > M_PI) yaw_error -= 2.0 * M_PI;
+                while (yaw_error < -M_PI) yaw_error += 2.0 * M_PI;
+
+                // 最大允许的 yaw 变化基于 yaw_rate_limit_ 和 MPC 步长
+                double max_delta = yaw_rate_limit_ * std::max(1e-3, mpc_->MPC_STEP);
+                if (yaw_error > max_delta) yaw_error = max_delta;
+                if (yaw_error < -max_delta) yaw_error = -max_delta;
+
+                yaw_r_ = yaw_r_ + yaw_error;
+                // 保持 [-pi, pi]
+                if (yaw_r_ > M_PI) yaw_r_ -= 2.0 * M_PI;
+                if (yaw_r_ < -M_PI) yaw_r_ += 2.0 * M_PI;
             }
-            // // 前瞻距离 L（米），可按需要调大/调小：大则更“看远”，小则更贴合当前弯道
-            // const double L = std::max(0.2, 3.0 * path_dis_);   // 例如 0.5 m 或 3*path_dis_
-            // const int lookahead_steps = std::max(1, int(L / path_dis_));
-
-            // const int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
-            // const int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
-
-            // const Eigen::Vector2d dir(
-            //     follow_path_[i1].x() - follow_path_[i0].x(),
-            //     follow_path_[i1].y() - follow_path_[i0].y()
-            // );
-
-            // if (dir.norm() > 1e-3) {
-            //     yaw_r_ = std::atan2(dir.y(), dir.x());
-            // }
-            // // 若方向极短则保持当前 yaw_r_ 不变，避免抖动
+            // 若 dir 太短则保持原有 yaw_r_ 不变，避免抖动
         }
     } else { 
         // 无有效路径：
@@ -1629,7 +1649,7 @@ void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
     local_pc_mutex_.lock();
 
     // update astar map
-    EvaluateReplan();
+
 
     local_pc_mutex_.unlock();
 

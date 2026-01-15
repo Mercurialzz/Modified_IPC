@@ -77,12 +77,12 @@ int main(int argc, char** argv)
                                                   boost::bind(&Goal_Data_t::feed, &planner.goal_data, _1),
                                                   ros::VoidConstPtr(),
                                                   ros::TransportHints().tcpNoDelay());
-    ros::Subscriber point_cloud_sub =
-        nh.subscribe<sensor_msgs::PointCloud2>("local_pc",
-                                               10,
-                                               boost::bind(&PlannerClass::LocalPcCallback, &planner, _1),
-                                               ros::VoidConstPtr(),
-                                               ros::TransportHints().tcpNoDelay());
+    // ros::Subscriber point_cloud_sub =
+    //     nh.subscribe<sensor_msgs::PointCloud2>("local_pc",
+    //                                            10,
+    //                                            boost::bind(&PlannerClass::LocalPcCallback, &planner, _1),
+    //                                            ros::VoidConstPtr(),
+    //                                            ros::TransportHints().tcpNoDelay());
 
     // ros topic pub
     planner.astar_pub_ = nh.advertise<visualization_msgs::Marker>("astar_path", 1);

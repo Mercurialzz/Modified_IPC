@@ -402,7 +402,7 @@ namespace vis_interface {
             int id = 0;
             visualization_msgs::Marker line_strip;
             line_strip.header.stamp = ros::Time::now();
-            line_strip.header.frame_id = "DEFAULT_FRAME_ID";
+            line_strip.header.frame_id = DEFAULT_FRAME_ID;
             line_strip.action = visualization_msgs::Marker::ADD;
             line_strip.ns = ns;
             line_strip.pose.orientation.w = 1.0;
@@ -468,7 +468,7 @@ namespace vis_interface {
             if (isnan(pt.x()) || isnan(pt.y()) || isnan(pt.z())) {
                 return;
             }
-            marker_ball.header.frame_id = "DEFAULT_FRAME_ID";
+            marker_ball.header.frame_id = DEFAULT_FRAME_ID;
             marker_ball.header.stamp = ros::Time::now();
             marker_ball.ns = ns.c_str();
             marker_ball.id = id >= 0 ? id : cnt++;
@@ -503,7 +503,7 @@ namespace vis_interface {
             static int id = 0;
             mkr.id = id++;
             mkr.type = visualization_msgs::Marker::SPHERE;
-            mkr.header.frame_id = "DEFAULT_FRAME_ID";
+            mkr.header.frame_id = DEFAULT_FRAME_ID;
             mkr.header.stamp = ros::Time::now();
             mkr.ns = ns;
             mkr.id = id++;
@@ -532,7 +532,7 @@ namespace vis_interface {
             static int line_cnt = 0;
             /* Publish point */
             visualization_msgs::Marker point;
-            point.header.frame_id = "DEFAULT_FRAME_ID";
+            point.header.frame_id = DEFAULT_FRAME_ID;
             point.header.stamp = ros::Time::now();
             point.ns = ns.c_str();
             point.id = point_id++;
@@ -562,7 +562,7 @@ namespace vis_interface {
 
             // publish lines
             visualization_msgs::Marker line_list;
-            line_list.header.frame_id = "DEFAULT_FRAME_ID";
+            line_list.header.frame_id = DEFAULT_FRAME_ID;
             line_list.header.stamp = ros::Time::now();
             line_list.ns = ns + "line";
             line_list.id = line_cnt++;

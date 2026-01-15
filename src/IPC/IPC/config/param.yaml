@@ -11,28 +11,28 @@ ctrl_delay:    0.0
 
 thrust_limit:  0.99
 hover_esti:    true
-hover_perc:    0.4
+hover_perc:    0.50
 
-visualization_en: true
+visualization_en: false
 corridor_bound_dis: 5.0
-corridor_line_max_length: 10.0
+corridor_line_max_length: 5.0
 visual_process: false
 frontend_in_known_free: false
 iris_iter_num: 4  #迭代次数越多，走廊越“宽松”，但计算量也增加
 obs_skip_num: 2   #障碍物采样跳步数。生成安全走廊时，障碍物点云会进行下采样，跳过部分点以减少计算量。
-robot_r: 0.01
-ref_dis:     35    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
-path_dis:    0.2  #路径稠密化的插值间距 5cm
+robot_r: 0.1
+ref_dis:     5   #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
+path_dis:    0.02  #路径稠密化的插值间距 5cm
 
 yaw_ctrl_flag:  true
-yaw_gain:       3.0
+yaw_gain:       3.5
 yaw_ki:         0.05
 yaw_i_limit:    0.5
 yaw_rate_limit: 5.0
 
 goal_x:        0.0
 goal_y:        0.0
-goal_z:        2.0
+goal_z:        1.5
 
 rc_reverse: # *
     roll: false
@@ -44,12 +44,12 @@ auto_takeoff_land:
     enable: true #set false when use qgc takeoff 
     enable_auto_arm: true
     no_RC: true # set true when sim, set false in exp
-    takeoff_height: 2.0 # m
+    takeoff_height: 1.5 # m
     takeoff_land_speed: 0.3 # m/s
 
 
 rog_astar:
-  map_voxel_num: [ 500, 500, 100 ]  # 乘以resolution 0.2 得到实际体积大小
+  map_voxel_num: [ 500, 500, 10 ]  # 乘以resolution 0.2 得到实际体积大小
   visual_process: false
   allow_diag: true
   # 0 DIAG; 1 MANHATTAN; 2 EUCLIDEAN
@@ -65,8 +65,8 @@ mpc:
   R_p:         2000.0
   R_v:         200.0
   R_a:         0.0
-  R_u:         0.0  #控制量惩罚项权重，
-  R_u_con:     0.8  #平滑度惩罚项，防止控制量跳变过大
+  R_u:         1  #控制量惩罚项权重，
+  R_u_con:     1  #平滑度惩罚项，防止控制量跳变过大
   R_pN:        2000.0
   R_vN:        200.0
   R_aN:        200.0
@@ -98,18 +98,18 @@ mpc:
 
 
 rog_map:
-  resolution: 0.2
-  inflation_resolution: 0.2
-  inflation_step: 2         ##障碍物膨胀半径  = inflation_resolution * inflation_step
-  unk_inflation_en: false
+  resolution: 0.3
+  inflation_resolution: 0.3
+  inflation_step: 2         
+  unk_inflation_en: true
   unk_inflation_step: 1
-  map_size: [ 100, 100, 10 ]
+  map_size: [ 50, 50, 5 ]
   # If the map rolling is disable, the map origin [m] should be set.
   fix_map_origin: [ 0,0, 0.5 ] #会限制A*搜索的高度，但不会限制安全飞行走廊
   frontier_extraction_en: false
 
   # Virtual ceil and ground
-  virtual_ceil_height: 10
+  virtual_ceil_height: 5
   virtual_ground_height: -0.5
 
   load_pcd_en: false
@@ -117,13 +117,13 @@ rog_map:
   map_sliding:
     enable: true
     # The minimum distance [m] to slide the map.
-    threshold: 0.3
+    threshold: 0.4
 
   esdf:
     enable: false
     resolution: 0.1
     # The range of esdf around the odom [m].
-    local_update_box: [ 5,5,3 ]
+    local_update_box: [ 5,5,4 ]
 
   # If [enable = true], the ROG-Map will actively take ros topic as input.
   #  else user should call function [updateMap] to update the map.
@@ -152,13 +152,13 @@ rog_map:
   intensity_thresh: -10
   # The temporal downsample rate for input point cloud.
   #  e.g. if set to k, the point cloud will be downsampled to 1/k.
-  point_filt_num: 2
+  point_filt_num: 1
 
   # Probabilistc update
   raycasting:
     # if disable, the map will only maintain occupied information, and all other grid
     # will be considered as unknown.
-    enable: true
+    enable: disable
     batch_update_size: 1
     local_update_box: [ 100,100,5 ]
     # The range of raycasting [m].

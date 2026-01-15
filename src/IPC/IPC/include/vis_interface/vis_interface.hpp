@@ -195,11 +195,15 @@ namespace vis_interface {
 
         void vizCiriSeedLine(const super_utils::Vec3f &a, const super_utils::Vec3f &b, const double &robot_r) override {
             if (!visualization_en_) {
+                ROS_INFO("Visualization disabled");
                 return;
             }
             if (ciri_mkr_pub_.getNumSubscribers() <= 0) {
+                ROS_INFO("No ciri seed line subscribers");
                 return;
             }
+
+            ROS_INFO("vizCiriSeedLine");
             visualization_msgs::MarkerArray mkr_arr;
             vis_interface::VisAdapter::addLineToMarkerArray(mkr_arr, a, b,
                                                              Color::Pink(), Color::Orange(), "seed_line",

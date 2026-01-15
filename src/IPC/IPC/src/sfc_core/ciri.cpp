@@ -230,6 +230,8 @@ RET_CODE CIRI::comvexDecomposition(const Eigen::MatrixX4d& bd, const Eigen::Matr
         optimized_polytope_.SetSeedLine(std::make_pair(a, b));
         optimized_polytope_.SetEllipsoid(E);
 
+    // vis_ptr_->vizCiriSeedLine(a, b,robot_r_);
+    // vis_ptr_->vizCiriEllipsoid(E);
     return SUCCESS;
 }
 
