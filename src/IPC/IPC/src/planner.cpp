@@ -41,6 +41,16 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     }    
     thr2acc_ = 9.81 / thrust_;
 
+    std::string file = ros::package::getPath("ipc") + "/config";
+    write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
+    write_data_.open((file+"/log_data.csv"), std::ios::out | std::ios::trunc);
+    log_times_.resize(5, 1);
+    write_time_ << "mapping(ms)" << ", " << "replan(ms)" << ", " << "sfc(ms)" << ", " << "mpc(ms)" << ", " << "df(ms)" << ", " <<std::endl;
+
+    write_data_ << "time(ms)" << ", " << "vel_x" << ", " << "vel_y" << ", " << "vel_z" << ", " <<"vel_norm" << ", "
+                << "mpc_x" << ", " << "mpc_y" << ", " << "mpc_z" << ", "
+                << "odom_x" << ", " << "odom_y" << ", " << "odom_z"
+                << std::endl;
     
     mpc_   = std::make_shared<MPCPlannerClass>(nh);
     
@@ -52,8 +62,8 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     } else {
         ROS_INFO("ROGMap config path from launch file: %s", config_path.c_str());
     }
-    
-    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path);
+
+    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path, log_times_[0]);
     const auto &rog_map_cfg = map_ptr_->getMapConfig();
     ROS_INFO("ROGMap initialized successfully.");
 
@@ -68,10 +78,6 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     //初始化 CorridorGenerator
     CorridorInit(param); 
 
-    std::string file = ros::package::getPath("ipc") + "/config";
-    write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
-    log_times_.resize(5, 1);
-    write_time_ << "mapping" << ", " << "replan" << ", " << "sfc" << ", " << "mpc" << ", " << "df" << ", " << std::endl;
 
     state = MANUAL_CTRL;
     hover_pose.setZero();
@@ -130,6 +136,7 @@ void PlannerClass::StateUpdate(void)
         odom_data.a = odom_data.q * Eigen::Vector3d(0,0,1) * (thrust_ * thr2acc_) - Gravity_;
         yaw_ = odom_data.yaw;
         odom_data.recv_new_msg = false;
+
     }
     //goal update
     if(goal_data.recv_new_msg)
@@ -140,15 +147,47 @@ void PlannerClass::StateUpdate(void)
             std::lock_guard<std::mutex> lock(goal_mutex_);
             goal_p_ = goal_data.new_goal;
             
-            // if (goal_p_.z() > map_upp_.z() - 0.5) goal_p_.z() = map_upp_.z() - 0.5;
-            // if (goal_p_.z() < 0.5) goal_p_.z() = 0.5;
             new_goal_flag_ = true;
-            goal_p_.z() = param.goal_z;
-            ROS_INFO("[px4ctrl] New goal received: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+            
+            // 只有到达了目标点，才能切换到下一个目标
+            if(goal_reached_)
+            {
+                change_goal = -1 * change_goal;  // 切换目标标志
+                goal_reached_ = false;  // 重置到达标志
+                ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
+            }
+            
+            // 根据change_goal设置目标点
+            if(change_goal == 1)
+            {
+                // 模式1：使用参数中的目标点
+                goal_p_.x() = param.goal_x;
+                goal_p_.y() = param.goal_y;
+                goal_p_.z() = param.goal_z;
+                ROS_INFO("[px4ctrl] New goal - Mode 1: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+            }
+            else if(change_goal == -1)
+            {
+                // 模式2：回到原点上方
+                goal_p_.x() = 0.0;
+                goal_p_.y() = 0.0;
+                goal_p_.z() = param.goal_z;
+                ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+            }
         }
-        // new_goal_flag_ = false;
         last_goal = goal_data.new_goal;
         goal_data.recv_new_msg = false;
+    }
+    
+    // 检测无人机是否到达目标点
+    if(!goal_reached_)
+    {
+        double distance_to_goal = (odom_data.p - goal_p_).norm();
+        if(distance_to_goal < goal_reach_threshold_)
+        {
+            goal_reached_ = true;
+            ROS_INFO("[px4ctrl] Goal reached! Distance: %.2f m. Ready to receive next goal.", distance_to_goal);
+        }
     }
 }
 /*
@@ -571,6 +610,7 @@ void PlannerClass::process()
     // cout << takeoff_land.landed << " ";
     // fflush(stdout);
     WriteLogTime();
+    WriteLogData();
 
     // STEP6: Clear flags beyound their lifetime
     dy_data.enter_hover_mode = false;
@@ -998,6 +1038,15 @@ void PlannerClass::WriteLogTime(void) {
     write_time_ << std::endl;
 }
 
+void PlannerClass::WriteLogData(void) {
+
+    write_data_ << ros::Time::now().toSec() << ", ";
+    write_data_ << odom_data.v.x() << ", " << odom_data.v.y() << ", " << odom_data.v.z() << ", "<<odom_data.v.norm() << ", ";
+    write_data_ << mpc_pos_.x() << ", " << mpc_pos_.y() << ", " << mpc_pos_.z() << ", ";
+    write_data_ << odom_data.p.x() << ", " << odom_data.p.y() << ", " << odom_data.p.z()<< ", ";
+    write_data_ << std::endl;
+}
+
 void PlannerClass::ComputeThrust(Eigen::Vector3d acc,const Eigen::Quaterniond& q) {
     const Eigen::Vector3d zB =  q * Eigen::Vector3d::UnitZ();
     double des_acc_norm = acc.dot(zB);
@@ -1110,10 +1159,10 @@ bool PlannerClass::estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen:
 void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u)
 {
     // calculate model predict control algorithm
-    ros::Time mpc_start = ros::Time::now();
+    ros::WallTime mpc_start = ros::WallTime::now();
     mpc_->SetStatus(odom.p, odom.v, odom.a);
     bool success_flag = mpc_->Run();
-    log_times_[3] = (ros::Time::now() - mpc_start).toSec() * 1000.0;
+    log_times_[3] = (ros::WallTime::now() - mpc_start).toSec() * 1000.0;
 
     Eigen::Vector3d u_optimal, p_optimal, v_optimal, a_optimal, u_predict;
     Eigen::MatrixXd A1, B1;
@@ -1131,6 +1180,8 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         p_optimal << x_optimal(0,0), x_optimal(1,0), x_optimal(2,0);
         v_optimal << x_optimal(3,0), x_optimal(4,0), x_optimal(5,0);
         a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
+
+        mpc_pos_ = p_optimal;
         if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
 
@@ -1163,7 +1214,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     }
     
     // ROS_INFO_THROTTLE(1,"a_optimal ");
-    ros::Time df_start = ros::Time::now();
+    ros::WallTime df_start = ros::WallTime::now();
     estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备
     ComputeThrust(a_optimal,odom.q);
@@ -1177,7 +1228,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     while (timed_thrust_.size() > 100) {
         timed_thrust_.pop();
     }
-    log_times_[4] = (ros::Time::now() - df_start).toSec() * 1000.0;
+    log_times_[4] = (ros::WallTime::now() - df_start).toSec() * 1000.0;
 }
 
 /*
@@ -1393,7 +1444,7 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
 }
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
-        ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
+        ros::WallTime t_start = ros::WallTime::now();  // 记录总执行开始时间
         EvaluateReplan();
         //路径规划触发逻辑
         if (new_goal_flag_) {
@@ -1407,7 +1458,7 @@ void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
             replan_flag_ = false;
             PathReplan(odom.p,des.p);
         }
-        log_times_[1] = (ros::Time::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
+        log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
 
         SetSFCAndGoal(odom,des);
 }
@@ -1429,7 +1480,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     // - mpc_->SetFSC(planes, i): 将第 i 个预测步的约束设置为 planes 所定义的凸多面体。
     // 注意：SFC 太“紧”或“排斥当前状态/参考”会使求解器报告 Primal Infeasible。
     //       下面的流程通过“先点后线、逐步扩展、必要回退”的策略降低不一致风险。
-    ros::Time sfc_start = ros::Time::now();
+    ros::WallTime sfc_start = ros::WallTime::now();
     if (follow_path_.size() > 0) { // 存在有效路径
         have_path_ = true;
         last_have_path_ = true;
@@ -1576,7 +1627,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         if (follow_path_.size() >= 2) {
             // 使用路径切线/前瞻点来确定偏航：比指向终点更能反映局部轨迹方向
             // L: 前瞻距离（米），按 path_dis_ 比例选择（可调）
-            const double L = std::max(0.2, 3.0 * path_dis_);
+            const double L = std::max(0.2, 10.0 * path_dis_);
             const int lookahead_steps = std::max(1, int(L / path_dis_));
 
             // i0: 当前参考点索引（取 astar_index_，确保不越界）
@@ -1625,7 +1676,7 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             mpc_->SetGoal(des.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
         }
     }
-    log_times_[2] = (ros::Time::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
+    log_times_[2] = (ros::WallTime::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
 void PlannerClass::EvaluateReplan()
 {
@@ -1644,13 +1695,13 @@ void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vecto
     yaw_r_ = yaw;
 }
 
-void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
-{
-    local_pc_mutex_.lock();
+// void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
+// {
+//     local_pc_mutex_.lock();
 
-    // update astar map
+//     // update astar map
 
 
-    local_pc_mutex_.unlock();
+//     local_pc_mutex_.unlock();
 
-}
+// }

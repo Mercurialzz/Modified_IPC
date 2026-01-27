@@ -171,6 +171,7 @@ private:
 
 	// std::shared_ptr<PlannerClass> planner_;
 	bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
+	bool return_flag_{false};
 	bool simu_flag_, perfect_simu_flag_, hover_esti_flag_, yaw_ctrl_flag_;
 	double ctrl_delay_;
     double thrust_limit_, hover_perc_;
@@ -180,7 +181,9 @@ private:
     std::vector<Eigen::Vector3d> remain_nodes_;
 
 	std::ofstream write_time_;
+	std::ofstream write_data_;
     std::vector<double> log_times_;
+	Eigen::Vector3d mpc_pos_;
 	ros::Time last_mpc_time_;
 	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_;
 
@@ -201,6 +204,9 @@ private:
     vec_Vec3f mpc_goals_;
 
 	bool have_path_{false},last_have_path_{false};
+	int change_goal{1};  // 目标点切换标志：1表示第一个目标，-1表示第二个目标
+	bool goal_reached_{false};  // 目标点是否已到达
+	double goal_reach_threshold_{0.5};  // 目标点到达判定阈值（单位：m）
 
 	double thr2acc_;
     double thrust_;
@@ -233,6 +239,7 @@ private:
 
 	// ---- tools ----
 	void WriteLogTime(void);
+	void WriteLogData(void);
 	void ComputeThrust(Eigen::Vector3d acc,const Eigen::Quaterniond& q);
 	void ConvertCommand(Eigen::Vector3d acc, Eigen::Vector3d jerk);
 	bool estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen::Quaterniond &q);

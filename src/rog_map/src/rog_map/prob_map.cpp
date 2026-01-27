@@ -323,7 +323,7 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
             << std::endl;
         return;
     }
-    else if (pos.z() < cfg_.virtual_ground_height) {
+    else if (pos.z() >= 1 && pos.z() < cfg_.virtual_ground_height ) {
         std::cout << YELLOW << "POS:" << pos.transpose() << "    GROUND_HEIGHT:"<< cfg_.virtual_ground_height << RESET<<std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
             << std::endl;
@@ -564,13 +564,26 @@ void ProbMap::probabilisticMapFromCache() {
         globalIndexToLocalIndex(id_g, id_l);
         int hash_id = getLocalIndexHash(id_l);
         globalIndexToPos(id_g, pos);
+        // --- 修改开始 ---
+        // 1. 先处理 Miss (清除)
+        int miss_count = raycast_data_.operation_cnt[hash_id] - raycast_data_.hit_cnt[hash_id];
+        if (miss_count > 0) {
+            missPointUpdate(pos, hash_id, miss_count);
+        }
+
+        // 2. 再处理 Hit (占据)
+        // 这样即使同一个格子既有Hit又有Miss，两者都会被计算，最终概率取决于谁更强
         if (raycast_data_.hit_cnt[hash_id] > 0) {
             hitPointUpdate(pos, hash_id, raycast_data_.hit_cnt[hash_id]);
         }
-        else {
-            missPointUpdate(pos, hash_id,
-                            raycast_data_.operation_cnt[hash_id] - raycast_data_.hit_cnt[hash_id]);
-        }
+        // --- 修改结束 ---
+        // if (raycast_data_.hit_cnt[hash_id] > 0) {
+        //     hitPointUpdate(pos, hash_id, raycast_data_.hit_cnt[hash_id]);
+        // }
+        // else {
+        //     missPointUpdate(pos, hash_id,
+        //                     raycast_data_.operation_cnt[hash_id] - raycast_data_.hit_cnt[hash_id]);
+        // }
         raycast_data_.hit_cnt[hash_id] = 0;
         raycast_data_.operation_cnt[hash_id] = 0;
     }

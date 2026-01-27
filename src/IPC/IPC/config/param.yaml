@@ -13,26 +13,29 @@ thrust_limit:  0.99
 hover_esti:    true
 hover_perc:    0.50
 
-visualization_en: false
+visualization_en: true
 corridor_bound_dis: 5.0
 corridor_line_max_length: 5.0
 visual_process: false
 frontend_in_known_free: false
 iris_iter_num: 4  #迭代次数越多，走廊越“宽松”，但计算量也增加
 obs_skip_num: 2   #障碍物采样跳步数。生成安全走廊时，障碍物点云会进行下采样，跳过部分点以减少计算量。
-robot_r: 0.1
-ref_dis:     5   #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
-path_dis:    0.02  #路径稠密化的插值间距 5cm
+robot_r: 0.2
+ref_dis:     16    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
+path_dis:    0.04  #路径稠密化的插值间距 5cm
 
 yaw_ctrl_flag:  true
-yaw_gain:       3.5
+yaw_gain:       1.0
 yaw_ki:         0.05
 yaw_i_limit:    0.5
 yaw_rate_limit: 5.0
 
-goal_x:        0.0
-goal_y:        0.0
-goal_z:        1.5
+## 45，0，0/ 90，0，0 / 43 -30 1
+goal_x:       43.0
+goal_y:       -30.0
+goal_z:        1.0
+
+
 
 rc_reverse: # *
     roll: false
@@ -44,16 +47,17 @@ auto_takeoff_land:
     enable: true #set false when use qgc takeoff 
     enable_auto_arm: true
     no_RC: true # set true when sim, set false in exp
-    takeoff_height: 1.5 # m
+    takeoff_height: 1.0 # m
     takeoff_land_speed: 0.3 # m/s
 
 
 rog_astar:
-  map_voxel_num: [ 500, 500, 10 ]  # 乘以resolution 0.2 得到实际体积大小
+  #体素覆盖的范围会被裁剪到 map_size 范围内
+  map_voxel_num: [ 1000, 1000, 15 ]  # 乘以resolution 0.2 得到实际体积大小
   visual_process: false
   allow_diag: true
   # 0 DIAG; 1 MANHATTAN; 2 EUCLIDEAN
-  heu_type: 0
+  heu_type: 2
   debug_visualization_en: false
   # path_dis:    0.02  #floyd路径稠密化的插值间距 2cm
 
@@ -62,18 +66,18 @@ mpc:
   step:        0.1
   # ctrl_delay:  0   # n step
 
-  R_p:         2000.0
-  R_v:         200.0
+  R_p:         1000.0
+  R_v:         0.0
   R_a:         0.0
-  R_u:         1  #控制量惩罚项权重，
-  R_u_con:     1  #平滑度惩罚项，防止控制量跳变过大
+  R_u:         1.0  #控制量惩罚项权重，
+  R_u_con:     40  #平滑度惩罚项，防止控制量跳变过大
   R_pN:        2000.0
   R_vN:        200.0
   R_aN:        200.0
 
   D_x:         0.0
   D_y:         0.0
-  D_z:         0.0
+  D_z:         0.05
 
   vx_min:     -20.0
   vy_min:     -20.0
@@ -82,11 +86,11 @@ mpc:
   vy_max:      20.0
   vz_max:      10.0
 
-  ax_min:     -15.0
-  ay_min:     -15.0
+  ax_min:     -10.0
+  ay_min:     -10.0
   az_min:     -10.0
-  ax_max:      15.0
-  ay_max:      15.0
+  ax_max:      10.0
+  ay_max:      10.0
   az_max:      10.0
 
   ux_min:     -150.0
@@ -98,26 +102,26 @@ mpc:
 
 
 rog_map:
-  resolution: 0.3
-  inflation_resolution: 0.3
-  inflation_step: 2         
+  resolution: 0.2
+  inflation_resolution: 0.2
+  inflation_step: 3      
   unk_inflation_en: true
   unk_inflation_step: 1
-  map_size: [ 50, 50, 5 ]
+  map_size: [ 80, 80, 6] #60 50 / 110 20 / 60 60 
   # If the map rolling is disable, the map origin [m] should be set.
-  fix_map_origin: [ 0,0, 0.5 ] #会限制A*搜索的高度，但不会限制安全飞行走廊
+  fix_map_origin: [20 ,-20,  0.5 ] #A*搜索的高度最低为0.5m，但不会限制安全飞行走廊 25 50 /25,-25
   frontier_extraction_en: false
 
-  # Virtual ceil and ground
-  virtual_ceil_height: 5
-  virtual_ground_height: -0.5
+  # Virtual ceil and ground 这些参数不直接限制 A 搜索*，但会在地图中创建虚拟障碍物，影响实际的路径规划。
+  virtual_ceil_height: 6
+  virtual_ground_height: -1.0
 
   load_pcd_en: false
 
   map_sliding:
-    enable: true
+    enable: false
     # The minimum distance [m] to slide the map.
-    threshold: 0.4
+    threshold: 0.05
 
   esdf:
     enable: false
@@ -143,7 +147,7 @@ rog_map:
     # The frame rate of visualization [Hz], if set to 0, the visualization will not be triggered by frame.
     frame_rate: 0
     # visualization range along the odom [m].
-    range: [ 50, 50,10 ]
+    range: [ 120, 120,10 ]
     frame_id: "map"
     pub_unknown_map_en: false
 
@@ -158,18 +162,18 @@ rog_map:
   raycasting:
     # if disable, the map will only maintain occupied information, and all other grid
     # will be considered as unknown.
-    enable: disable
+    enable: false
     batch_update_size: 1
     local_update_box: [ 100,100,5 ]
     # The range of raycasting [m].
-    ray_range: [0.5, 100 ]
+    ray_range: [0.0, 20 ]
 
     p_min: 0.12
-    p_miss: 0.49
-    p_free: 0.499
-    p_occ: 0.85
-    p_hit: 0.9
-    p_max: 0.98
+    p_miss: 0.49 #0.49
+    p_free: 0.499 #0.499
+    p_occ:  0.85 #0.85
+    p_hit: 0.9 #0.9
+    p_max: 0.97 #0.98
     # The threshold of a non-occupied inf map grid to be considered as free. [0.0-1.0]
     # for counter map, if each cell contains N cells in prob map, then only when
     # N_unk > N * unk_thresh cells are unknown, the cell will be considered as unknown.

@@ -197,7 +197,6 @@ void Odom_Data_t::feed(nav_msgs::OdometryConstPtr pMsg)
     msg = *pMsg;
     rcv_stamp = now;
     recv_new_msg = true;
-
     uav_utils::extract_odometry(pMsg, p, v, q, w);
 
     yaw = fromQuaternion2yaw(q);

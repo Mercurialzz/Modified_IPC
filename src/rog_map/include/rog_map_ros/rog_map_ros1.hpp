@@ -50,6 +50,7 @@ namespace rog_map {
 
     class ROGMapROS :public ROGMap {
         ros::NodeHandle nh_;
+        double& map_time_cost_record_;
 
         const double getSystemWalltimeNow() override {
             return ros::Time::now().toSec();
@@ -115,6 +116,31 @@ namespace rog_map {
         }
 
         void updateCallback(const ros::TimerEvent& event) {
+            static double last_time = 0;
+            double current_time = ros::WallTime::now().toSec();
+
+            if (last_time == 0) {
+                last_time = current_time;
+                return; // 第一帧先跳过，仅仅记录时间
+            }
+
+            static int frame_count = 0;
+            frame_count++;
+            
+            // 每 1000 次调用（大约1秒）计算并打印一次频率
+            if (frame_count >= 1000) {
+                double duration = current_time - last_time;
+                // 频率 = 帧数 / 时间间隔
+                double real_hz = frame_count / duration; 
+                
+                std::cout << GREEN << " -- [ROGMapROS] Real update rate: " 
+                        << real_hz << " Hz." << RESET << std::endl;
+                
+                // 重置计数器和时间
+                last_time = current_time;
+                frame_count = 0;
+            }
+
             if (map_empty_) {
                 static double last_print_t = ros::Time::now().toSec();
                 double cur_t = ros::Time::now().toSec();
@@ -142,9 +168,11 @@ namespace rog_map {
             temp_pose = rc_.pc_pose;
             rc_.unfinished_frame_cnt = 0;
             rc_.updete_lock.unlock();
-
+            //记录地图更新所花费的时间
+            ros::WallTime start_time = ros::WallTime::now();
             updateProbMap(temp_pc, temp_pose);
-
+            map_time_cost_record_ = (ros::WallTime::now() - start_time).toSec() * 1000.0;
+            // std::cout << BLUE << " -- [ROGMapROS] Map updated in " << time_used << " ms." << RESET << std::endl;
             writeTimeConsumingToLog(time_log_file_);
         }
 
@@ -289,7 +317,7 @@ namespace rog_map {
     public:
         typedef shared_ptr<ROGMapROS> Ptr;
 
-        ROGMapROS(const ros::NodeHandle& nh, const std::string& cfg_path) :nh_(nh){
+        ROGMapROS(const ros::NodeHandle& nh, const std::string& cfg_path,double &map_log_time) :nh_(nh), map_time_cost_record_(map_log_time){
             cfg_ = rog_map::Config(cfg_path);
             init();
             /// Initialize visualization module
@@ -316,13 +344,14 @@ namespace rog_map {
             }
             vm_.mkr_arr_pub = nh_.advertise<visualization_msgs::MarkerArray>("rog_map/map_bound", 1);
 
+            std::cout << GREEN << " -- [ROGMapROS] Initialized ROS1 interface." << RESET << std::endl;
             if (cfg_.ros_callback_en) {
                 rc_.odom_sub = nh_.subscribe(cfg_.odom_topic, 1, &ROGMapROS::odomCallback, this);
                 rc_.cloud_sub = nh_.subscribe(cfg_.cloud_topic, 1, &ROGMapROS::cloudCallback, this);
-                rc_.update_timer = nh_.createTimer(ros::Duration(0.001), &ROGMapROS::updateCallback, this);
+                rc_.update_timer = nh_.createTimer(ros::Duration(0.01), &ROGMapROS::updateCallback, this);
             }
         }
-
+                    
     private:
         static void visualizeBoundingBox(visualization_msgs::MarkerArray& mkrarr,
                                          const Vec3f& box_min,
