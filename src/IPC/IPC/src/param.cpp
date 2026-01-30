@@ -40,6 +40,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "robot_r", robot_r);
 	read_essential_param(nh, "ref_dis", ref_dis);
 	read_essential_param(nh, "path_dis", path_dis);
+	read_essential_param(nh, "planning_horizon", planning_horizon);
 
 	read_essential_param(nh, "msg_timeout/odom", msg_timeout.odom);
 	read_essential_param(nh, "msg_timeout/rc", msg_timeout.rc);

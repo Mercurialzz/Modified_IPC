@@ -177,6 +177,7 @@ private:
     double thrust_limit_, hover_perc_;
 	double path_dis_;
 	int ref_dis_;
+	double planning_horizon_;
 	int mpc_ctrl_index_;
     std::vector<Eigen::Vector3d> remain_nodes_;
 

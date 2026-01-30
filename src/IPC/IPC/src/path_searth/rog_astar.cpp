@@ -893,24 +893,17 @@ namespace path_search {
         if (!insideLocalMap(point)) return true; // 局部地图外不判定为阻塞
         rog_map::GridType gt = md_.use_inf_map ? map_ptr_->getInfGridType(point) : map_ptr_->getGridType(point);
         if (gt == OCCUPIED || gt == OUT_OF_MAP) return false;
-        if (md_.unknown_as_occ && gt == UNKNOWN) return false;
+        // if (md_.unknown_as_occ && gt == UNKNOWN) return false;
         return true;
     }
 
     bool Astar::CheckPathFree(const rog_map::vec_Vec3f& path) {
         if (path.empty()) return true;
 
-        auto is_blocked_point = [&](const rog_map::Vec3f &p) -> bool {
-            if (!insideLocalMap(p)) return false; // 局部地图外不判定为阻塞
-            rog_map::GridType gt = md_.use_inf_map ? map_ptr_->getInfGridType(p) : map_ptr_->getGridType(p);
-            if (gt == OCCUPIED || gt == OUT_OF_MAP) return true;
-            if (md_.unknown_as_occ && gt == UNKNOWN) return true;
-            return false;
-        };
 
         // 1) 点占据快速检查
         for (const auto &pt : path) {
-            if (is_blocked_point(pt)) return false;
+            if (!CheckPointFree(pt)) return false;
         }
 
         // // 2) 相邻段直线采样检查

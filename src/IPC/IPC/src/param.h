@@ -84,6 +84,7 @@ public:
     double robot_r;
 	int ref_dis;
 	double path_dis;
+
 	rog_map::vec_E<rog_map::Vec3i> seed_line_neighbour;
 
 	double resolution;

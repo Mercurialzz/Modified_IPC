@@ -10,7 +10,8 @@
         <remap from="~goal_pub"     to="/mpc/goal"/>
         
         <!-- subscribe topic -->
-        <remap from="~local_pc"     to="/cloud_registered"/>
+        <!-- <remap from="~local_pc"     to="/cloud_registered"/> -->
+        <!-- <remap from="~local_pc"     to="/livox/lidar"/> -->
         <remap from="~odom"         to="/mavros/local_position/odom"/>
         <remap from="~imu"          to="/mavros/imu/data"/>
         <remap from="~goal"         to="/goal"/>

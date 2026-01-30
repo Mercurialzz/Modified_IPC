@@ -32,6 +32,7 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
 
     path_dis_ = param.path_dis;
     ref_dis_ = param.ref_dis;
+    planning_horizon_ = param.planning_horizon;
 
     Gravity_ << 0, 0, 9.81;
     if (simu_flag_) {
@@ -1253,15 +1254,32 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
  */
 void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal)
 {
+    ros::WallTime replan_start = ros::WallTime::now();
+    Eigen::Vector3d vec_to_goal = goal - start_pt;
+    double dist_to_goal = vec_to_goal.norm();
+
+    Eigen::Vector3d local_goal;
+    bool use_local_target = false;
+
+    // 如果全局目标太远，就截取一个局部目标
+    if (dist_to_goal > planning_horizon_) {
+        local_goal = start_pt + vec_to_goal.normalized() * planning_horizon_;
+        use_local_target = true;
+    } else {
+        // 如果已经很近了，直接用全局目标
+        local_goal = goal;
+    }
+    // Eigen::Vector3d local_goal = goal;
     // 执行A*搜索
     Vec3f start_pos = Vec3f(start_pt.x(), start_pt.y(), start_pt.z());
-    Vec3f goal_pos  = Vec3f(goal.x(),  goal.y(),  goal.z());
+    Vec3f goal_pos  = Vec3f(local_goal.x(), local_goal.y(), local_goal.z());
 
     astar_path_.clear();
     waypoints_.clear();
     follow_path_.clear();
 
     bool search_flag = PathSearch(start_pos, goal_pos, astar_path_);
+    log_times_[1] = (ros::WallTime::now() - replan_start).toSec() * 1000.0;
     if (search_flag) {
         //原始 A* 路径可视化（黑色小点）
         AstarPublish(astar_path_, 0, 0.1);
@@ -1301,9 +1319,9 @@ void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vecto
     geometry_msgs::PoseStamped msg;
     msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
-    msg.pose.position.x = follow_path_.back().x();
-    msg.pose.position.y = follow_path_.back().y();
-    msg.pose.position.z = follow_path_.back().z();    
+    msg.pose.position.x = local_goal.x();
+    msg.pose.position.y = local_goal.y();
+    msg.pose.position.z = local_goal.z();   
     goal_pub_.publish(msg);
 
     //ros::Time now = ros::Time::now();
@@ -1315,7 +1333,6 @@ bool PlannerClass::PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f 
 {
     using namespace path_search; 
     
-
     // ---------- Step 1: 起点类型检测 ----------
     //确保起终点在地图内并且不在障碍物内
     //起点检查
@@ -1446,20 +1463,21 @@ void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::WallTime t_start = ros::WallTime::now();  // 记录总执行开始时间
         EvaluateReplan();
-        //路径规划触发逻辑
+        // //路径规划触发逻辑
         if (new_goal_flag_) {
             // 新目标点：执行完整路径规划（扩展模式）
             new_goal_flag_ = false;
             replan_flag_ = false;
             PathReplan(odom.p,des.p);
+            // log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
         }
         if (new_goal_flag_ == false && replan_flag_) {
             // 障碍物触发：执行局部重规划（非扩展模式）
             replan_flag_ = false;
             PathReplan(odom.p,des.p);
+            // log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
         }
-        log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
-
+        // PathReplan(odom.p,des.p);
         SetSFCAndGoal(odom,des);
 }
 
@@ -1680,11 +1698,56 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
 }
 void PlannerClass::EvaluateReplan()
 {
-    // evaluate whether need replan
+    // // evaluate whether need replan
+    // vec_Vec3f remain_path;
+    // int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size()));
+    // remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
+    // if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+
+    // 1. 如果没有路径或已经到达目标，不需要重规划检测
+    if (!have_path_ || goal_reached_) {
+        return;
+    }
+
+
+    // --- 机制一：障碍物检测 (安全性) ---
+    // 截取当前剩余的路径片段
     vec_Vec3f remain_path;
     int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size()));
     remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
-    if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+    
+    // 如果剩余路径上有障碍物，立即重规划
+    if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) {
+        replan_flag_ = true;
+        ROS_WARN("[Replan] Collision detected ahead!");
+        return;
+    }
+
+    // --- 机制二：主动滚动规划 (Receding Horizon) ---
+    
+    // A. 时间触发：每隔一定时间 (例如 0.2s / 5Hz) 强制重规划一次
+    // 这保证了路径始终基于最新的地图信息进行优化
+    static ros::WallTime last_replan_time = ros::WallTime::now();
+    double time_since_last = (ros::WallTime::now() - last_replan_time).toSec();
+    if (time_since_last > 0.1) { // 推荐 0.1s - 0.5s 之间
+        replan_flag_ = true;
+        last_replan_time = ros::WallTime::now();
+        return;
+    }
+
+    // B. 距离触发：如果当前路径快走完了（剩余点数不足），强制重规划
+    // 这样可以防止无人机在定时器触发前就飞出了路径末端
+    int remain_pts = follow_path_.size() - astar_index_;
+    // 阈值设为 MPC 预测长度的 1.5 倍左右 (确保 MPC 始终有参考点)
+    int replan_threshold = mpc_->MPC_HORIZON * ref_dis_; //点的个数
+    
+    // 只有当距离全局目标还很远（> 3.0米）时，才需要担心路径耗尽的问题
+    double dist_to_global_goal = (odom_data.p - goal_p_).norm();
+    if (dist_to_global_goal > 3.0 && remain_pts < replan_threshold) {
+        replan_flag_ = true;
+        // last_replan_time = ros::WallTime::now(); // 重置计时器
+        ROS_INFO("[Replan] Path executing out, active replanning...");
+    }
 }
 
 void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vector3d& goal_vel,const Eigen::Vector3d& goal_acc,double yaw)
