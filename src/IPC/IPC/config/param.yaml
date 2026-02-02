@@ -21,12 +21,12 @@ frontend_in_known_free: false
 iris_iter_num: 2  #迭代次数越多，走廊越“宽松”，但计算量也增加
 obs_skip_num: 2   #障碍物采样跳步数。生成安全走廊时，障碍物点云会进行下采样，跳过部分点以减少计算量。
 robot_r: 0.2
-ref_dis:     15    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
+ref_dis:     10    #ref_dis为MPC参考点间距间的点个数，表示ref_dis个点的距离作为MPC在horizon内的一个目标点，因此MPC间隔间距为ref_dis * path_dis
 path_dis:    0.05  #路径稠密化的插值间距 5cm
 planning_horizon: 20.0 #规划视野范围(米)，用于目标截断
 
 yaw_ctrl_flag:  true
-yaw_gain:       1.0
+yaw_gain:       1.5
 yaw_ki:         0.05
 yaw_i_limit:    0.5
 yaw_rate_limit: 5.0
@@ -54,16 +54,18 @@ auto_takeoff_land:
 
 rog_astar:
   #体素覆盖的范围会被裁剪到 map_size 范围内
-  map_voxel_num: [ 100, 100, 20 ]  # 乘以resolution 0.2 得到实际体积大小
+  map_voxel_num: [ 100, 100, 15 ]  # 乘以resolution 0.2 得到实际体积大小
   visual_process: false
   allow_diag: true
   # 0 DIAG; 1 MANHATTAN; 2 EUCLIDEAN
   heu_type: 2
   debug_visualization_en: false
+  esdf_weight: 2.0
+  safe_distance: 1.0
   # path_dis:    0.02  #floyd路径稠密化的插值间距 2cm
 
 mpc:
-  horizon:     15 #总的预测步数，总的预测距离为 horizon * ref_dis * path_dis  要在box内
+  horizon:     10 #总的预测步数，总的预测距离为 horizon * ref_dis * path_dis  要在box内
   step:        0.1
   # ctrl_delay:  0   # n step
 
@@ -71,7 +73,7 @@ mpc:
   R_v:         0.0
   R_a:         0.0
   R_u:         0.1  #控制量惩罚项权重，
-  R_u_con:     10  #平滑度惩罚项，防止控制量跳变过大
+  R_u_con:     20  #平滑度惩罚项，防止控制量跳变过大
   R_pN:        2000.0
   R_vN:        200.0
   R_aN:        200.0
@@ -105,12 +107,12 @@ mpc:
 rog_map:
   resolution: 0.2
   inflation_resolution: 0.2
-  inflation_step: 2      
+  inflation_step: 1      
   unk_inflation_en: false
   unk_inflation_step: 1
-  map_size: [ 60, 50, 6] #60 50 / 110 20 / 60 60 
+  map_size: [ 60, 50, 6] #60 50 / 70 20 / 60 60 
   # If the map rolling is disable, the map origin [m] should be set.
-  fix_map_origin: [25 ,0,  0.5 ] #A*搜索的高度最低为0.5m，但不会限制安全飞行走廊 25 50 /25,-25
+  fix_map_origin: [20 ,0,  0.5 ] #A*搜索的高度最低为0.5m，但不会限制安全飞行走廊 25 50 /25,-25(开启了map_sliding则不用调整)
   frontier_extraction_en: false
 
   # Virtual ceil and ground 这些参数不直接限制 A 搜索*，但会在地图中创建虚拟障碍物，影响实际的路径规划。
@@ -125,10 +127,10 @@ rog_map:
     threshold: 0.05
 
   esdf:
-    enable: false
-    resolution: 0.1
+    enable: true
+    resolution: 0.2
     # The range of esdf around the odom [m].
-    local_update_box: [ 5,5,4 ]
+    local_update_box: [ 10,10,4 ]
 
   # If [enable = true], the ROG-Map will actively take ros topic as input.
   #  else user should call function [updateMap] to update the map.
@@ -150,7 +152,7 @@ rog_map:
     # The frame rate of visualization [Hz], if set to 0, the visualization will not be triggered by frame.
     frame_rate: 0
     # visualization range along the odom [m].
-    range: [ 120, 120,10 ]
+    range: [ 100, 100,5 ]
     frame_id: "map"
     pub_unknown_map_en: false
 

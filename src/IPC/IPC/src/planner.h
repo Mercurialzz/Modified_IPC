@@ -5,6 +5,11 @@
 #include <ros/assert.h>
 #include <ros/package.h>
 
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+
 #include <fstream>
 #include <mutex>
 #include <tf/tf.h>
@@ -142,6 +147,7 @@ public:
 	};
 
 	PlannerClass(ros::NodeHandle &nh,Parameter_t &);
+	~PlannerClass();
 	void process();
 	bool rc_is_received(const ros::Time &now_time);
 	bool cmd_is_received(const ros::Time &now_time);
@@ -173,6 +179,7 @@ private:
 	bool has_map_flag_{false}, has_odom_flag_{false}, replan_flag_{false}, new_goal_flag_{false};
 	bool return_flag_{false};
 	bool simu_flag_, perfect_simu_flag_, hover_esti_flag_, yaw_ctrl_flag_;
+	bool emergency_stop_flag_{false};
 	double ctrl_delay_;
     double thrust_limit_, hover_perc_;
 	double path_dis_;
@@ -224,6 +231,23 @@ private:
     std::shared_ptr<CorridorGenerator> corridor_gen_;
 	std::shared_ptr<vis_interface::VisInterface> vis_ptr_;
 	std::shared_ptr<path_search::Astar> astar_ptr_;
+
+	// 【新增】多线程相关变量
+    std::thread planning_thread_;        // 规划线程
+    std::mutex path_mutex_;              // 路径读写锁（保护 follow_path_）
+    std::mutex data_mutex_;              // 数据读写锁（保护 odom 和 goal）
+    std::condition_variable plan_cv_;    // 条件变量，用于唤醒规划线程
+    
+    std::atomic<bool> trigger_replan_flag_{false}; // 触发标志
+    std::atomic<bool> is_planning_{false};         // 正在规划标志
+    std::atomic<bool> thread_running_{true};       // 线程运行保活标志
+
+    // 用于线程间传递的快照数据
+    Eigen::Vector3d thread_start_pt_;
+    Eigen::Vector3d thread_goal_pt_;
+
+    // 【新增】规划线程主函数
+    void PlanningThreadFunc();
 
 	// ---- control related ----
 	Desired_State_t get_hover_des();

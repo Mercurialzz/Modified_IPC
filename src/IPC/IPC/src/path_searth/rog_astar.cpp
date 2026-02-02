@@ -337,6 +337,12 @@ namespace path_search {
 
         local_start_pt = start_pt;
         local_end_pt = end_pt;
+        // 索引: [dx+1][dy+1][dz+1] -> 对应 0~2
+        static const double step_cost_table[3][3][3] = {
+            {{1.732, 1.414, 1.732}, {1.414, 1.0, 1.414}, {1.732, 1.414, 1.732}},
+            {{1.414, 1.0,   1.414}, {1.0,   0.0, 1.0},   {1.414, 1.0,   1.414}},
+            {{1.732, 1.414, 1.732}, {1.414, 1.0, 1.414}, {1.732, 1.414, 1.732}}
+        };
 
         if (!insideLocalMap(start_pt)) {
             vis_ptr_->warn(" -- [A*] Start point [{}] is out of local map, find a waypoint to the map edge.",
@@ -557,10 +563,25 @@ namespace path_search {
                         }
 
                         neighborPtr->rounds = rounds_;
-                        double distance_score = sqrt(dx * dx + dy * dy + dz * dz);
-                        distance_score = current->distance_score + distance_score;
-                        rog_map::Vec3f pos;
-                        globalIndexToPos(neighborIdx, pos);
+                        // 1. 计算基础几何距离 (欧氏距离)
+                        double step_dist = step_cost_table[dx+1][dy+1][dz+1];
+                        // 2. 【新增】计算 ESDF 风险代价
+                        double esdf_cost = 0.0;
+                        if (md_.use_inf_map) { // 仅在主地图搜索时启用
+                            // 获取离最近障碍物的距离 
+                            double dist_to_obs = map_ptr_->getDist(neighborIdx); 
+                            // 如果距离小于安全阈值，施加二次方惩罚
+                            if (dist_to_obs < cfg_.safe_distance) {
+                                // 防止距离为负（如果在障碍物内）
+                                dist_to_obs = std::max(0.0, dist_to_obs);
+                                // 归一化因子 (0 ~ 1)，距离越近因子越大
+                                double risk_factor = (cfg_.safe_distance - dist_to_obs) / cfg_.safe_distance;
+                                // 代价 = 权重 * 因子^2 * 步长
+                                esdf_cost = cfg_.esdf_weight * risk_factor * risk_factor * step_dist;
+                            }
+                        }
+                        // 3. 总 G 值 = 父节点 G 值 + 几何距离 + ESDF代价
+                        double distance_score = current->distance_score + step_dist + esdf_cost;
                         double heu_score = getHeu(neighborPtr, endPtr, cfg_.heu_type);
 
                         if (!flag_explored) {
@@ -889,29 +910,44 @@ namespace path_search {
         }
         return true;
     }
-    bool Astar::CheckPointFree(const rog_map::Vec3f &point) {
-        if (!insideLocalMap(point)) return true; // 局部地图外不判定为阻塞
-        rog_map::GridType gt = md_.use_inf_map ? map_ptr_->getInfGridType(point) : map_ptr_->getGridType(point);
-        if (gt == OCCUPIED || gt == OUT_OF_MAP) return false;
-        // if (md_.unknown_as_occ && gt == UNKNOWN) return false;
+    // 修改 CheckPointFree 实现
+    bool Astar::CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map) { // <--- 增加参数
+        if (!insideLocalMap(point)) return true; 
+        
+        // 根据参数决定查哪张图
+        rog_map::GridType gt;
+        if (use_inf_map) {
+            gt = map_ptr_->getInfGridType(point); // 查膨胀地图
+        } else {
+            gt = map_ptr_->getGridType(point);    // 查原始概率地图 (Raw Map)
+        }
+
+        if (gt == OUT_OF_MAP) return true;// 局部地图外视为空闲
+        if (gt == OCCUPIED) return false;
         return true;
     }
 
-    bool Astar::CheckPathFree(const rog_map::vec_Vec3f& path) {
+    // 修改 CheckPathFree 实现
+    bool Astar::CheckPathFree(const rog_map::vec_Vec3f& path, bool use_inf_map) { // <--- 增加参数
         if (path.empty()) return true;
 
-
-        // 1) 点占据快速检查
         for (const auto &pt : path) {
-            if (!CheckPointFree(pt)) return false;
+            // 将参数透传给 CheckPointFree
+            if (!CheckPointFree(pt, use_inf_map)) return false; 
         }
-
-        // // 2) 相邻段直线采样检查
-        // for (size_t i = 0; i + 1 < path.size(); ++i) {
-        //     const rog_map::Vec3f &p1 = path[i];
-        //     const rog_map::Vec3f &p2 = path[i + 1];
-        //     if (!CheckLineObstacleFree(p1, p2)) return false;
-        // }
         return true;
+    }
+
+    void Astar::updateLocalMapCenter(const rog_map::Vec3f& center) {
+        // 1. 更新中心点坐标
+        md_.local_map_center_d = center;
+        
+        // 2. 更新中心点的栅格索引 (用于 getLocalIndexHash 等内部计算)
+        posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
+        
+        // 3. 更新局部地图的物理边界 (Bounding Box)
+        //这决定了 CheckPointFree 判断 "Inside/Outside" 的范围
+        md_.local_map_min_d = md_.local_map_center_d - md_.resolution * cfg_.map_size_i.cast<double>();
+        md_.local_map_max_d = md_.local_map_center_d + md_.resolution * cfg_.map_size_i.cast<double>();
     }
 }

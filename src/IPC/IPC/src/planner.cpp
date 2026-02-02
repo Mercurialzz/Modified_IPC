@@ -79,6 +79,11 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     //初始化 CorridorGenerator
     CorridorInit(param); 
 
+// 【新增】启动规划线程
+    thread_running_ = true;
+    planning_thread_ = std::thread(&PlannerClass::PlanningThreadFunc, this);
+    
+    ROS_INFO("Planning thread started.");
 
     state = MANUAL_CTRL;
     hover_pose.setZero();
@@ -1254,32 +1259,17 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
  */
 void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal)
 {
-    ros::WallTime replan_start = ros::WallTime::now();
-    Eigen::Vector3d vec_to_goal = goal - start_pt;
-    double dist_to_goal = vec_to_goal.norm();
 
-    Eigen::Vector3d local_goal;
-    bool use_local_target = false;
-
-    // 如果全局目标太远，就截取一个局部目标
-    if (dist_to_goal > planning_horizon_) {
-        local_goal = start_pt + vec_to_goal.normalized() * planning_horizon_;
-        use_local_target = true;
-    } else {
-        // 如果已经很近了，直接用全局目标
-        local_goal = goal;
-    }
-    // Eigen::Vector3d local_goal = goal;
     // 执行A*搜索
     Vec3f start_pos = Vec3f(start_pt.x(), start_pt.y(), start_pt.z());
-    Vec3f goal_pos  = Vec3f(local_goal.x(), local_goal.y(), local_goal.z());
+    Vec3f goal_pos  = Vec3f(goal.x(), goal.y(), goal.z());
 
     astar_path_.clear();
     waypoints_.clear();
     follow_path_.clear();
 
     bool search_flag = PathSearch(start_pos, goal_pos, astar_path_);
-    log_times_[1] = (ros::WallTime::now() - replan_start).toSec() * 1000.0;
+
     if (search_flag) {
         //原始 A* 路径可视化（黑色小点）
         AstarPublish(astar_path_, 0, 0.1);
@@ -1319,9 +1309,9 @@ void PlannerClass::PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vecto
     geometry_msgs::PoseStamped msg;
     msg.header.frame_id = "map";
     msg.header.stamp = ros::Time::now();
-    msg.pose.position.x = local_goal.x();
-    msg.pose.position.y = local_goal.y();
-    msg.pose.position.z = local_goal.z();   
+    msg.pose.position.x = goal.x();
+    msg.pose.position.y = goal.y();
+    msg.pose.position.z = goal.z();   
     goal_pub_.publish(msg);
 
     //ros::Time now = ros::Time::now();
@@ -1462,23 +1452,29 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
         ros::WallTime t_start = ros::WallTime::now();  // 记录总执行开始时间
-        EvaluateReplan();
-        // //路径规划触发逻辑
+        // 1. 触发判断 (仅仅是设置标志位，耗时几乎为0)
         if (new_goal_flag_) {
-            // 新目标点：执行完整路径规划（扩展模式）
+            // 新目标到来，强制触发一次
             new_goal_flag_ = false;
-            replan_flag_ = false;
-            PathReplan(odom.p,des.p);
-            // log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
+            std::lock_guard<std::mutex> lk(data_mutex_);
+            thread_start_pt_ = odom.p;
+            thread_goal_pt_ = goal_p_; // 或者是 des.p
+            trigger_replan_flag_ = true;
+            plan_cv_.notify_one();
+        } else {
+            // 常规检查
+            EvaluateReplan();
         }
-        if (new_goal_flag_ == false && replan_flag_) {
-            // 障碍物触发：执行局部重规划（非扩展模式）
-            replan_flag_ = false;
-            PathReplan(odom.p,des.p);
-            // log_times_[1] = (ros::WallTime::now() - t_start).toSec() * 1000.0;  // 记录规划耗时
+
+        // 2. 执行 SFC 和 MPC (必须加锁保护 follow_path_)
+        {
+            // 加上大括号限制锁的范围，尽快释放
+            std::lock_guard<std::mutex> lock(path_mutex_); 
+            
+            // 调用 SetSFCAndGoal 时，它内部会读取 follow_path_
+            // 此时 follow_path_ 是线程安全的
+            SetSFCAndGoal(odom, des);
         }
-        // PathReplan(odom.p,des.p);
-        SetSFCAndGoal(odom,des);
 }
 
 void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des)
@@ -1683,70 +1679,92 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         // - yaw_r_ 保持当前航向。
         have_path_ = false;
         static double yaw_now;
+        static Eigen::Vector3d pos_now;
         if(have_path_ != last_have_path_) {
             ROS_WARN("\033[41;37m No valid path! Stay at current point! \033[0m");
             yaw_now = yaw_;
+            pos_now = odom.p;
             last_have_path_ = have_path_;
         }
         // 无有效路径：保持在当前位置
         yaw_r_ = yaw_now; //debug
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
-            mpc_->SetGoal(des.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
-        }
+            mpc_->SetGoal(pos_now, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
+        } //debug 这里有问题
     }
     log_times_[2] = (ros::WallTime::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
 }
 void PlannerClass::EvaluateReplan()
 {
-    // // evaluate whether need replan
-    // vec_Vec3f remain_path;
-    // int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size()));
-    // remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
-    // if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) replan_flag_ = true;
+    // 0. 基础状态检查
+    if (is_planning_) return; // 正在规划中，勿扰
+    if (!have_path_ || goal_reached_) return;
 
-    // 1. 如果没有路径或已经到达目标，不需要重规划检测
-    if (!have_path_ || goal_reached_) {
-        return;
-    }
+    bool need_plan = false;
 
+    // 1. 【关键】将 A* 的局部地图中心更新到无人机当前位置
+    // 这意味着 A* 内部的 "insideLocalMap" 判断将基于无人机当前周围的区域
+    astar_ptr_->updateLocalMapCenter(odom_data.p);
 
-    // --- 机制一：障碍物检测 (安全性) ---
-    // 截取当前剩余的路径片段
+    // 2. 提取【完整】的剩余路径
     vec_Vec3f remain_path;
-    int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size()));
-    remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
-    
-    // 如果剩余路径上有障碍物，立即重规划
-    if (!remain_path.empty() && astar_ptr_->CheckPathFree(remain_path) == false) {
-        replan_flag_ = true;
-        ROS_WARN("[Replan] Collision detected ahead!");
-        return;
+    {
+        // 快速加锁读取路径
+        std::lock_guard<std::mutex> lock(path_mutex_); 
+        
+        // 获取当前位置之后的索引
+        int start_idx = std::min<int>(std::max<int>(astar_index_, 0), int(follow_path_.size())); //检查的是follow_path_，这里有问题
+        
+        // 获取A*结束点
+        double check_dist = 12.0; 
+        int check_steps = std::ceil(check_dist / path_dis_);
+        // 【修改点】不再截断，直接提取从当前位置到终点的所有点
+        // 由于你的总路径 < 50m，这里的点数通常 < 500个，CheckPathFree 耗时极短
+        remain_path.insert(remain_path.begin(), follow_path_.begin() + start_idx, follow_path_.end());
+    }
+    // 3. 在新视界下执行碰撞检测
+    if (!remain_path.empty()) {
+        // 加地图读锁 (C++14 写法)
+        std::shared_lock<std::shared_timed_mutex> lock(map_ptr_->map_mutex_);
+        
+        //  重规划检测 (保持原样，默认 true，检查膨胀地图) ---
+        // 只要侵入膨胀层，就准备重规划，保持舒适距离
+        if (astar_ptr_->CheckPathFree(remain_path, true) == false) { // 显式写 true 也可以
+            need_plan = true;
+        }
+    }
+    // 4. 路径耗尽检测 
+    // 只有在没触发避障规划时，才检查是否需要“续命”
+    if (!need_plan && !remain_path.empty()) {
+        
+        // A. 计算当前手中剩余路径的物理长度
+        double current_remain_dist = remain_path.size() * path_dis_;
+        
+        // B. 计算离全局终点的直线距离
+        double dist_to_global_goal = (goal_p_ - odom_data.p).norm();
+
+        // C. 触发条件：
+        //    1. 剩余路径不够长了 (例如只剩 15米，大概够飞 3-5秒)
+        //    2. 且 离终点还很远 (说明当前的 remain_path 只是局部路径，并未通向终点)
+        //       (判定标准：终点距离 比 剩余路径 长出 3米以上)
+        double replenish_thresh = 5.0; 
+        
+        if (current_remain_dist < replenish_thresh && dist_to_global_goal > (current_remain_dist + 0.2)) {
+            need_plan = true;
+            // ROS_INFO_THROTTLE(1.0, "[Planner] Path running out (%.1fm left), extending horizon...", current_remain_dist);
+        }
     }
 
-    // --- 机制二：主动滚动规划 (Receding Horizon) ---
-    
-    // A. 时间触发：每隔一定时间 (例如 0.2s / 5Hz) 强制重规划一次
-    // 这保证了路径始终基于最新的地图信息进行优化
-    static ros::WallTime last_replan_time = ros::WallTime::now();
-    double time_since_last = (ros::WallTime::now() - last_replan_time).toSec();
-    if (time_since_last > 0.1) { // 推荐 0.1s - 0.5s 之间
-        replan_flag_ = true;
-        last_replan_time = ros::WallTime::now();
-        return;
-    }
-
-    // B. 距离触发：如果当前路径快走完了（剩余点数不足），强制重规划
-    // 这样可以防止无人机在定时器触发前就飞出了路径末端
-    int remain_pts = follow_path_.size() - astar_index_;
-    // 阈值设为 MPC 预测长度的 1.5 倍左右 (确保 MPC 始终有参考点)
-    int replan_threshold = mpc_->MPC_HORIZON * ref_dis_; //点的个数
-    
-    // 只有当距离全局目标还很远（> 3.0米）时，才需要担心路径耗尽的问题
-    double dist_to_global_goal = (odom_data.p - goal_p_).norm();
-    if (dist_to_global_goal > 3.0 && remain_pts < replan_threshold) {
-        replan_flag_ = true;
-        // last_replan_time = ros::WallTime::now(); // 重置计时器
-        ROS_INFO("[Replan] Path executing out, active replanning...");
+    // --- 3. 执行唤醒 (Trigger Execution) ---
+    if (need_plan) {
+        {
+            std::lock_guard<std::mutex> lk(data_mutex_);
+            thread_start_pt_ = odom_data.p; 
+            thread_goal_pt_ = goal_p_;      
+            trigger_replan_flag_ = true;
+        }
+        plan_cv_.notify_one(); // 唤醒规划线程！
+        
     }
 }
 
@@ -1756,6 +1774,111 @@ void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vecto
         mpc_->SetGoal(goal_pos, goal_vel, goal_acc, i);
     }
     yaw_r_ = yaw;
+}
+
+void PlannerClass::PlanningThreadFunc()
+{
+    while (thread_running_)
+    {
+        // 1. 等待触发信号
+        std::unique_lock<std::mutex> lk(data_mutex_);
+        plan_cv_.wait(lk, [this]{ return trigger_replan_flag_.load() || !thread_running_; });
+        
+        if (!thread_running_) break;
+
+        // 取消触发标志，标记正在规划
+        trigger_replan_flag_ = false;
+        is_planning_ = true;
+
+        // 复制起点和终点（数据快照），避免在规划时 odom 发生变化
+        Eigen::Vector3d start_pt = thread_start_pt_;
+        Eigen::Vector3d goal_pt = thread_goal_pt_;
+        lk.unlock(); // 解锁，让主线程可以继续更新 odom
+
+        // 2. 执行耗时的 A* 规划 (使用局部变量)
+        vec_Vec3f temp_astar_path;
+        vec_Vec3f temp_waypoints;
+        vec_Vec3f temp_follow_path;
+
+        // 调用 PathSearch (注意：PathSearch 内部只读 map，通常是线程安全的，除非 map 正在被大幅更新)
+        // 这里的逻辑就是原 PathReplan 的核心逻辑
+        
+        //--- 动态视距截断逻辑 
+        
+        Eigen::Vector3d vec_to_goal = goal_pt - start_pt;
+        Eigen::Vector3d target_pt;
+        if (vec_to_goal.norm() > planning_horizon_) {
+            target_pt = start_pt + vec_to_goal.normalized() * planning_horizon_;
+        } else {
+            target_pt = goal_pt;
+        }
+
+        // target_pt = goal_pt;
+        bool success = false;
+        Vec3f s_pos(start_pt.x(), start_pt.y(), start_pt.z());
+        Vec3f g_pos(target_pt.x(), target_pt.y(), target_pt.z());
+        ros::WallTime t0 = ros::WallTime::now();
+        {
+            ros::WallTime t1 = ros::WallTime::now();
+            std::shared_lock<std::shared_timed_mutex> lock(map_ptr_->map_mutex_);
+            success = PathSearch(s_pos, g_pos, temp_astar_path);
+            ros::WallTime t2 = ros::WallTime::now();
+
+            double wait_time = (t1 - t0).toSec() * 1000.0; // 等待耗时
+            double calc_time = (t2 - t1).toSec() * 1000.0; // 计算耗时
+            log_times_[1] = calc_time;
+            // ROS_INFO("A* Wait: %.2f ms, Calc: %.2f ms", wait_time, calc_time);
+        }
+
+
+        if (success) {
+            // Floyd 平滑
+            astar_ptr_->FloydHandle(temp_astar_path, temp_waypoints);
+            
+            // 插值生成稠密路径
+            if (!temp_waypoints.empty()) {
+                temp_follow_path.push_back(temp_waypoints.front());
+                for (size_t i = 0; i + 1 < temp_waypoints.size(); ++i) {
+                    Vec3f p0 = temp_waypoints[i];
+                    Vec3f p1 = temp_waypoints[i + 1];
+                    Vec3f seg = p1 - p0;
+                    double seg_len = seg.norm();
+                    if (seg_len < 1e-6) continue;
+                    int inter_num = static_cast<int>(std::floor(seg_len / path_dis_));
+                    for (int k = 1; k < inter_num; ++k) {
+                        temp_follow_path.push_back(p0 + seg * static_cast<double>(k) / inter_num);
+                    }
+                    temp_follow_path.push_back(p1);
+                }
+            }
+            // 确保包含末端
+            if(!temp_waypoints.empty()) temp_follow_path.push_back(temp_waypoints.back());
+
+            // 3. 【关键】加锁更新全局路径
+            // 只有这一瞬间会锁住主线程，耗时极短 (<0.1ms)
+            std::lock_guard<std::mutex> path_lock(path_mutex_);
+            astar_path_ = temp_astar_path;   // 用于可视化
+            waypoints_ = temp_waypoints;     // 用于可视化
+            follow_path_ = temp_follow_path; // 核心控制路径
+            
+            // 重置索引，告诉 MPC 有新路径来了
+            // 注意：这里需要精细处理，如果是在飞行中重规划，
+            // 最好找到新路径上距离当前位置最近的点作为 astar_index_
+            // 但简单起见，如果新路径起点就是当前位置，重置为0即可
+            astar_index_ = 0; 
+            
+            // 可视化 (可以在这里发布，或者在主线程发布)
+            AstarPublish(astar_path_, 0, 0.1);
+            AstarPublish(follow_path_, 2, path_dis_);
+        } else {
+             ROS_WARN("Async A* failed.");
+             std::lock_guard<std::mutex> path_lock(path_mutex_);
+             follow_path_.clear(); 
+             astar_index_ = 0;
+        }
+
+        is_planning_ = false;
+    }    
 }
 
 // void PlannerClass::LocalPcCallback(const sensor_msgs::PointCloud2ConstPtr& msg)
@@ -1768,3 +1891,29 @@ void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vecto
 //     local_pc_mutex_.unlock();
 
 // }
+
+PlannerClass::~PlannerClass()
+{
+// 1. 标志位设为 false，通知线程该退出了
+    thread_running_ = false;
+
+    // 2. 唤醒线程（如果它正卡在 wait 处），让它有机会检查 thread_running_ 标志
+    plan_cv_.notify_all();
+
+    // 等待规划线程安全退出
+    if (planning_thread_.joinable()) {
+        planning_thread_.join();
+    }
+
+    ROS_INFO("PlannerClass destroyed and planning thread stopped.");
+    // 关闭日志文件
+    if (write_time_.is_open()) write_time_.close();
+    if (write_data_.is_open()) write_data_.close();
+
+    // 重置智能指针（可选，帮助明确析构顺序）
+    astar_ptr_.reset();
+    corridor_gen_.reset();
+    mpc_.reset();
+    map_ptr_.reset();
+    vis_ptr_.reset();
+}

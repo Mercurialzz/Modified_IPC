@@ -27,6 +27,7 @@
 #include <rog_map/rog_map_core/common_lib.hpp>
 #include <super_utils/type_utils.hpp>
 #include <fmt/color.h>
+#include <rog_map/esdf_map.h>
 
 namespace rog_map {
     using namespace std;
@@ -54,7 +55,24 @@ namespace rog_map {
         rog_map::Config getMapConfig() const {
             return cfg_;
         }
-
+        
+        // 【新增】暴露 ESDF 距离查询接口
+        // 返回点 pos 到最近障碍物的距离（单位：米）
+        double getDist(const Vec3f& pos) const {
+            // 检查 esdf_map_ 是否初始化 (esdf_map_ 通常定义在父类或作为成员变量)
+            if (this->esdf_map_) {
+                return this->esdf_map_->getDistance(pos);
+            }
+            return 0.0; // 如果没有 ESDF，默认距离为 0 (或者返回极大值，视逻辑而定)
+        }
+        // 【新增】高性能整数索引接口 (直接透传给 ESDFMap)
+        // 这里的 Vec3i 是全局栅格索引，ESDFMap 本身支持用索引查询
+        double getDist(const Vec3i& id) const {
+            if (this->esdf_map_) {
+                return this->esdf_map_->getDistance(id);
+            }
+            return 0.0;
+        }
 
         bool isLineFree(const Vec3f& start_pt, const Vec3f& end_pt,
                         const double& max_dis = 999999,

@@ -38,6 +38,7 @@
 #ifdef USE_ROS1
 #ifndef ROG_MAP_ROS_HPP
 #define ROG_MAP_ROS_HPP
+#include <shared_mutex>
 #include <rog_map/rog_map.h>
 #include <dynamic_reconfigure/server.h>
 #include <nav_msgs/Odometry.h>
@@ -170,6 +171,7 @@ namespace rog_map {
             rc_.updete_lock.unlock();
             //记录地图更新所花费的时间
             ros::WallTime start_time = ros::WallTime::now();
+            std::unique_lock<std::shared_timed_mutex> lock(map_mutex_);
             updateProbMap(temp_pc, temp_pose);
             map_time_cost_record_ = (ros::WallTime::now() - start_time).toSec() * 1000.0;
             // std::cout << BLUE << " -- [ROGMapROS] Map updated in " << time_used << " ms." << RESET << std::endl;
@@ -316,6 +318,7 @@ namespace rog_map {
 
     public:
         typedef shared_ptr<ROGMapROS> Ptr;
+        mutable std::shared_timed_mutex map_mutex_;
 
         ROGMapROS(const ros::NodeHandle& nh, const std::string& cfg_path,double &map_log_time) :nh_(nh), map_time_cost_record_(map_log_time){
             cfg_ = rog_map::Config(cfg_path);

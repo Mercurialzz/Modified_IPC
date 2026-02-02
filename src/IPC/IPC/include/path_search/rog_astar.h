@@ -118,6 +118,10 @@ namespace path_search {
             bool debug_visualization_en;
             bool allow_diag{false};
             int heu_type{0};
+
+            // 【新增】ESDF 策略参数
+            double esdf_weight{1.0};      // 权重：越大越厌恶障碍物
+            double safe_distance{1.0};    // 阈值：小于此距离开始产生代价 (单位：米)
         } cfg_;
 
 
@@ -129,6 +133,8 @@ namespace path_search {
             read_essential_param(nh, "rog_astar/allow_diag", cfg_.allow_diag);
             read_essential_param(nh, "rog_astar/heu_type", cfg_.heu_type);
             read_essential_param(nh, "rog_astar/debug_visualization_en", cfg_.debug_visualization_en);
+            read_essential_param(nh, "rog_astar/esdf_weight", cfg_.esdf_weight);
+            read_essential_param(nh, "rog_astar/safe_distance", cfg_.safe_distance);
 
             cfg_.map_voxel_num = Vec3i(vox_[0], vox_[1], vox_[2]);
             cfg_.map_size_i = cfg_.map_voxel_num / 2;
@@ -186,6 +192,9 @@ namespace path_search {
 
         typedef std::shared_ptr<Astar> Ptr;
 
+        // 【新增】更新局部地图中心（轻量级）
+        void updateLocalMapCenter(const rog_map::Vec3f& center);
+
         void setVisualProcessEn(const bool &en);
 
         void setFineInfNeighbors(const int & neighbor_step);
@@ -193,7 +202,7 @@ namespace path_search {
     RET_CODE pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                     const int &flag,
                     rog_map::vec_Vec3f &out_path,
-                    const double &time_out = 0.1);
+                    const double &time_out = 1.0);
 
         /// @ brief: The escape path only for path search from prob map to inf map. from non-occupied point to
         ///          inf map free (or known freee) point . Aim to find a path from current point to (known) free point
@@ -224,13 +233,16 @@ namespace path_search {
      */
     bool CheckLineObstacleFree(const rog_map::Vec3f &p1, const rog_map::Vec3f &p2);
 
-    /**
-     * @brief 检查一条离散路径是否无碰，包括点占据与相邻段的直线采样碰撞检测。
-     * @param path 连续坐标路径（起点->终点）。
-     * @return true 路径完全可达；false 存在占据/不可通行段。
+/**
+     * @brief 检查一条离散路径是否无碰
+     * @param path 路径点
+     * @param use_inf_map true=检查膨胀地图(默认,用于规划/重规划); false=检查原始地图(用于紧急制动)
      */
-    bool CheckPathFree(const rog_map::vec_Vec3f &path);
+    bool CheckPathFree(const rog_map::vec_Vec3f &path, bool use_inf_map = true); // <--- 修改这里
 
-    bool CheckPointFree(const rog_map::Vec3f &point);
+    /**
+     * @brief 检查单点是否无碰
+     */
+    bool CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map = true);
     };
 }
