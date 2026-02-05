@@ -70,6 +70,18 @@ public:
     double goal_y;
     double goal_z;
     
+	double goal_x_1;
+    double goal_y_1;
+    double goal_z_1;
+    
+	double goal_x_2;
+    double goal_y_2;
+    double goal_z_2;
+
+	double goal_x_3;
+    double goal_y_3;
+    double goal_z_3;
+	
     bool visualization_en;
     double corridor_bound_dis;
     double corridor_line_max_length;

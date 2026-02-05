@@ -31,6 +31,18 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "goal_y", goal_y);
 	read_essential_param(nh, "goal_z", goal_z);
 
+	read_essential_param(nh, "goal_x_1", goal_x_1);
+	read_essential_param(nh, "goal_y_1", goal_y_1);
+	read_essential_param(nh, "goal_z_1", goal_z_1);
+
+	read_essential_param(nh, "goal_x_2", goal_x_2);
+	read_essential_param(nh, "goal_y_2", goal_y_2);
+	read_essential_param(nh, "goal_z_2", goal_z_2);
+
+	read_essential_param(nh, "goal_x_3", goal_x_3);
+	read_essential_param(nh, "goal_y_3", goal_y_3);
+	read_essential_param(nh, "goal_z_3", goal_z_3);
+	
 	read_essential_param(nh, "visualization_en", visualization_en);
 	read_essential_param(nh, "corridor_bound_dis", corridor_bound_dis);
 	read_essential_param(nh, "corridor_line_max_length", corridor_line_max_length);

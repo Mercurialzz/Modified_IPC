@@ -59,6 +59,9 @@ namespace vis_interface {
             /*=============================FOR replan log ========================================*/
             replan_log_pc_pub_ = nh_.advertise<sensor_msgs::PointCloud2>("visualization/replan_log_pc", 100);
             replan_log_mkr_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/replan_log_mkr", 100);
+
+            /* [新增] For Velocity Text */
+            vel_text_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("visualization/velocity_text", 10);
         }
 
 
@@ -265,7 +268,25 @@ namespace vis_interface {
             vis_interface::VisAdapter::addVecPointsToPointCloud2(points, pc2);
             ciri_pc_pub_.publish(pc2);
         }
+        /* [新增] 实现速度可视化 */
+        void vizVelocity(const super_utils::Vec3f &position, const double &velocity, const std::string &ns = "velocity_text") override {
+            if (!visualization_en_) return;
+            if (vel_text_pub_.getNumSubscribers() <= 0) return;
 
+            visualization_msgs::MarkerArray mkr_arr;
+            
+            // 构造显示文本，保留两位小数
+            std::string text = "Vel: " + std::to_string(velocity).substr(0, 4) + " m/s";
+            
+            // 为了不遮挡无人机模型，将文字显示在无人机上方 0.5m 处
+            super_utils::Vec3f text_pos = position;
+            text_pos.z() += 0.5;
+
+            // 使用黑色显示
+            VisAdapter::addTextToMarkerArray(mkr_arr, text_pos, text, ns, Color::Black(), 1.0);
+            
+            vel_text_pub_.publish(mkr_arr);
+        }
     private:
         ros::NodeHandle nh_;
         // viz markers
@@ -278,6 +299,8 @@ namespace vis_interface {
         ros::Publisher replan_log_mkr_pub_, replan_log_pc_pub_;
 
         ros::Publisher ciri_mkr_pub_, ciri_pc_pub_;
+
+        ros::Publisher vel_text_pub_;
 
     };
 }

@@ -15,6 +15,7 @@ Panels:
         - /PointCloud21
         - /PointCloud22
         - /Path2
+        - /MarkerArray3
       Splitter Ratio: 0.5
     Tree Height: 455
   - Class: rviz/Selection
@@ -33,7 +34,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: PointCloud2
+    SyncSource: ""
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -124,14 +125,7 @@ Visualization Manager:
       Marker Topic: /ipc_node/rog_map/map_bound
       Name: MarkerArray
       Namespaces:
-        Local Map Origin: true
-        Local Map Origin_text: true
-        Local Map Range: true
-        Local Map Range Text: true
-        Updating Range: true
-        Updating Range Text: true
-        Visualization Range: true
-        Visualization Range Text: true
+        {}
       Queue Size: 1
       Value: true
     - Alpha: 0.10000000149011612
@@ -238,6 +232,14 @@ Visualization Manager:
       Topic: /path
       Unreliable: false
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /ipc_node/visualization/velocity_text
+      Name: MarkerArray
+      Namespaces:
+        velocity_text: true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -277,7 +279,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.2197966575622559
+      Pitch: 1.2147966623306274
       Target Frame: <Fixed Frame>
       Yaw: 1.5354045629501343
     Saved: ~
@@ -298,4 +300,4 @@ Window Geometry:
     collapsed: true
   Width: 1237
   X: 2327
-  Y: 203
+  Y: 166
