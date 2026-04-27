@@ -25,6 +25,7 @@
 #pragma once
 #include <ros/ros.h>
 #include "Eigen/Dense"
+#include <shared_mutex>
 #include "vector"
 #include "rog_map_ros/rog_map_ros1.hpp"
 #include "queue"
@@ -107,7 +108,7 @@ namespace path_search {
             rog_map::Vec3f local_map_center_d;
             double mission_rcv_WT{0};
             rog_map::Vec3f local_map_max_d, local_map_min_d;
-            std::mutex mission_mtx;
+            mutable std::shared_timed_mutex mission_mtx;
         } md_;
 
         /*Astar_param*/
@@ -170,7 +171,7 @@ namespace path_search {
 
         bool neighborHaveOne(const rog_map::GridType &type, const rog_map::Vec3i &src_id);
 
-    RET_CODE setup(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &goal_pt, const int &flag);
+        RET_CODE setupUnlocked(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &goal_pt, const int &flag);
 
         void retrievePath(GridNodePtr current, vector<GridNodePtr> &path);
 
@@ -244,5 +245,8 @@ namespace path_search {
      * @brief 检查单点是否无碰
      */
     bool CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map = true);
+
+    private:
+        bool CheckPointFreeUnlocked(const rog_map::Vec3f &point, bool use_inf_map);
     };
 }

@@ -34,7 +34,7 @@ class PerfectDrone {
 	n.param("init_position/y", position_.y(), 0.0);
 	n.param("init_position/z", position_.z(), 1.0);
 	q_ = Eigen::Quaterniond(Mat33::Identity());
-	odom_.header.frame_id = "world";
+	odom_.header.frame_id = "map";
 	odom_pub_timer_ = nh_.createTimer(ros::Duration(0.01), &PerfectDrone::publishOdom, this);
   }
   ~PerfectDrone() {
@@ -88,7 +88,7 @@ class PerfectDrone {
 	static tf2_ros::TransformBroadcaster br_map_ego;
 	geometry_msgs::TransformStamped transformStamped;
 	transformStamped.header.stamp = odom_.header.stamp;
-	transformStamped.header.frame_id = "world";
+	transformStamped.header.frame_id = "map";
 	transformStamped.child_frame_id = "drone";
 	transformStamped.transform.translation.x = odom_.pose.pose.position.x;
 	transformStamped.transform.translation.y = odom_.pose.pose.position.y;
@@ -100,7 +100,7 @@ class PerfectDrone {
 	br_map_ego.sendTransform(transformStamped);
 
 	visualization_msgs::Marker meshROS;
-	meshROS.header.frame_id = "world";
+	meshROS.header.frame_id = "map";
 	meshROS.header.stamp = odom_.header.stamp;
 	meshROS.ns = "mesh";
 	meshROS.id = 0;

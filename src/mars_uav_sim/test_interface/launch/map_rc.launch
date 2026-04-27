@@ -12,7 +12,7 @@
      <!-- topic of your odometry such as VIO or LIO -->
      <arg name="odom_topic" value="/lidar_slam/odom" />
      <arg name="global_cloud_topic" default="/map_generator/global_cloud"></arg>
-     <arg name="frame_id" default="world"></arg>
+     <arg name="frame_id" default="map"></arg>
 
     <param name = "add_boundary" type = "bool" value="false" />
     <param name = "is_bridge" type = "bool" value="false" />

@@ -1,0 +1,158 @@
+#----------------- base param -----------------#
+simulation:    true
+perfect_simu:  false
+odom_vel_in_body: false
+mass:          2.6
+gra:           9.81
+ctrl_freq_max: 100.0
+max_manual_vel: 4.0
+low_voltage:   13.2
+
+ctrl_delay:    0.0
+
+thrust_limit:  0.9
+hover_esti:    true
+hover_perc:    0.41
+
+visualization_en: true
+corridor_bound_dis: 4.0
+corridor_line_max_length: 5.0
+visual_process: false
+frontend_in_known_free: false
+iris_iter_num: 2
+obs_skip_num: 2
+robot_r: 0.3
+ref_dis: 30
+path_dis: 0.02
+planning_horizon: 15.0
+
+yaw_ctrl_flag:  true
+yaw_gain:       1.5
+yaw_ki:         0.05
+yaw_i_limit:    0.5
+yaw_rate_limit: 5.0
+
+goal_x:      10.0
+goal_y:      0.0
+goal_z:      1.0
+
+goal_x_1:    10.0
+goal_y_1:    0.0
+goal_z_1:    1.0
+goal_x_2:    15.0
+goal_y_2:    5.0
+goal_z_2:    1.0
+goal_x_3:    5.0
+goal_y_3:    -5.0
+goal_z_3:    1.0
+use_waypoint_sequence: false
+
+rc_reverse:
+    roll: false
+    pitch: false
+    yaw: false
+    throttle: false
+
+auto_takeoff_land:
+    enable: false
+    enable_auto_arm: false
+    no_RC: true
+    takeoff_height: 1.0
+    takeoff_land_speed: 0.3
+
+rog_astar:
+  map_voxel_num: [ 100, 100, 15 ]
+  visual_process: false
+  allow_diag: true
+  heu_type: 2
+  debug_visualization_en: false
+  esdf_weight: 5.0
+  safe_distance: 1.0
+
+mpc:
+  horizon:     10
+  step:        0.1
+  R_p:         2000.0
+  R_v:         0.0
+  R_a:         0.0
+  R_u:         0.1
+  R_u_con:     1.0
+  R_pN:        2000.0
+  R_vN:        200.0
+  R_aN:        200.0
+  D_x:         0.0
+  D_y:         0.0
+  D_z:         0.05
+  vx_min:     -20.0
+  vy_min:     -20.0
+  vz_min:     -10.0
+  vx_max:      20.0
+  vy_max:      20.0
+  vz_max:      10.0
+  ax_min:     -10.0
+  ay_min:     -10.0
+  az_min:     -10.0
+  ax_max:      10.0
+  ay_max:      10.0
+  az_max:      10.0
+  ux_min:     -150.0
+  uy_min:     -150.0
+  uz_min:     -150.0
+  ux_max:      150.0
+  uy_max:      150.0
+  uz_max:      150.0
+
+rog_map:
+  resolution: 0.2
+  inflation_resolution: 0.2
+  inflation_step: 2
+  unk_inflation_en: false
+  unk_inflation_step: 1
+  map_size: [ 40, 40, 6 ]
+  fix_map_origin: [0 , 0 , 0.5]
+  frontier_extraction_en: false
+  virtual_ceil_height: 6
+  virtual_ground_height: -0.2
+  load_pcd_en: false
+  map_sliding:
+    enable: false
+    threshold: 0.2
+  esdf:
+    enable: true
+    resolution: 0.2
+    local_update_box: [ 20,20,3 ]
+  ros_callback:
+    enable: true
+    cloud_topic: "/pcl_render_node/cloud"
+    odom_topic: "/lidar_slam/odom"
+    odom_timeout: 2.0
+  visualization:
+    enable: true
+    use_dynamic_reconfigure: false
+    time_rate: 2
+    frame_rate: 0
+    range: [ 100, 100,5 ]
+    frame_id: "map"
+    pub_unknown_map_en: false
+  intensity_thresh: -10
+  point_filt_num: 1
+  raycasting:
+    enable: false
+    batch_update_size: 1
+    local_update_box: [ 100,100,5 ]
+    ray_range: [0.0, 20 ]
+    p_min: 0.12
+    p_miss: 0.49
+    p_free: 0.499
+    p_occ:  0.85
+    p_hit: 0.9
+    p_max: 0.97
+    unk_thresh: 1.0
+
+msg_timeout:
+    odom: 0.5
+    rc:   0.5
+    cmd:  0.5
+    imu:  0.5
+    bat:  0.5
+    goal: 0.5

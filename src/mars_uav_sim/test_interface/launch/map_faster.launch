@@ -7,7 +7,7 @@
     <!-- topic of your odometry such as VIO or LIO -->
     <arg name="odom_topic" value="/lidar_slam/odom"/>
     <arg name="global_cloud_topic" default="/map_generator/global_cloud"></arg>
-    <arg name="frame_id" default="world"></arg>
+    <arg name="frame_id" default="map"></arg>
 
     <node pkg="random_map_generator" type="random_map_node" name="random_map_node" output="screen">
         <rosparam command="load" file="$(find test_interface)/config/map_faster.yaml"/>

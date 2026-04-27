@@ -407,7 +407,7 @@ int main(int argc, char** argv)
 
   sensor_msgs::PointCloud2 msg;
   pcl::toROSMsg(cloud, msg);
-  msg.header.frame_id = "world";
+  msg.header.frame_id = "map";
   ROS_INFO("Map point size = %d", cloud.points.size());
 
     //write files

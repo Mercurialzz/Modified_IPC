@@ -71,7 +71,7 @@ namespace so3_quadrotor {
                 tf::Transform transform;
                 transform.setOrigin(tf::Vector3(pos.x(), pos.y(), pos.z()));
                 transform.setRotation(tf::Quaternion(quat.x(), quat.y(), quat.z(), quat.w()));
-                tf_br_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "body"));
+                tf_br_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "map", "body"));
                 // odom
                 odom_msg_.header.stamp = tnow;
                 odom_msg_.pose.pose.position.x = pos(0);
@@ -193,11 +193,11 @@ namespace so3_quadrotor {
                                                                 ros::TransportHints().tcpNoDelay());
             simulation_timer = nh.createTimer(ros::Duration(1.0 / simulation_rate_), &Nodelet::timer_callback, this);
 
-            odom_msg_.header.frame_id = "world";
-            imu_msg_.header.frame_id = "world";
+            odom_msg_.header.frame_id = "map";
+            imu_msg_.header.frame_id = "map";
             vis_msg_.markers.resize(4);
             visualization_msgs::Marker propeller;
-            propeller.header.frame_id = "world";
+            propeller.header.frame_id = "map";
             propeller.type = visualization_msgs::Marker::CYLINDER;
             propeller.action = visualization_msgs::Marker::ADD;
             propeller.scale.x = 2 * prop_radius;

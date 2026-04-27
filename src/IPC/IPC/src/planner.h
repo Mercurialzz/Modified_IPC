@@ -8,6 +8,8 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <array>
+#include <cstdint>
 #include <condition_variable>
 
 #include <fstream>
@@ -180,20 +182,24 @@ private:
 	bool return_flag_{false};
 	bool simu_flag_, perfect_simu_flag_, hover_esti_flag_, yaw_ctrl_flag_;
 	bool emergency_stop_flag_{false};
+	bool path_blocked_flag_{false};
+	bool corridor_generation_failed_{false};
 	double ctrl_delay_;
     double thrust_limit_, hover_perc_;
 	double path_dis_;
 	int ref_dis_;
 	double planning_horizon_;
+	bool sim_mode_{false};
 	int mpc_ctrl_index_;
     std::vector<Eigen::Vector3d> remain_nodes_;
 
 	std::ofstream write_time_;
 	std::ofstream write_data_;
-    std::vector<double> log_times_;
+    std::atomic<double> map_log_time_ms_{0.0};
+    std::array<double, 4> log_times_{{0.0, 0.0, 0.0, 0.0}};
 	Eigen::Vector3d mpc_pos_;
 	ros::Time last_mpc_time_;
-	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_;
+	std::mutex  odom_mutex_, goal_mutex_, cloud_mutex_, local_pc_mutex_, log_mutex_;
 
 	Eigen::Vector3d goal_p_;
 	Eigen::Vector3d rate_;
@@ -203,8 +209,13 @@ private:
 	double yaw_rate_limit_{1.5};
 	double yaw_i_limit_{0.5};
 	double yaw_int_{0.0};
+	int mpc_fail_count_{0};
+	const int mpc_fail_limit_{3};
 
 	int astar_index_{0};
+    std::uint64_t path_version_{0};
+    std::uint64_t active_path_version_{0};
+    const int replan_transition_steps_{3};
     vec_Vec3f astar_path_;
     vec_Vec3f waypoints_;
     vec_Vec3f follow_path_;
@@ -246,8 +257,10 @@ private:
     Eigen::Vector3d thread_start_pt_;
     Eigen::Vector3d thread_goal_pt_;
 
-    // 【新增】规划线程主函数
-    void PlanningThreadFunc();
+	// 【新增】规划线程主函数
+	void PlanningThreadFunc();
+    bool CommitFallbackPathToSafePoint(const Eigen::Vector3d &current_pos, Eigen::Vector3d &safe_point);
+    bool FindNearestSafeGoal(const Eigen::Vector3d &requested_goal, Eigen::Vector3d &safe_goal);
 
 	// ---- control related ----
 	Desired_State_t get_hover_des();
@@ -275,13 +288,13 @@ private:
     }
 	// void PathReplan(bool extend,const Odom_Data_t& odom,const Desired_State_t& des);
     void GeneratePolyOnPath();
-    void GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
-	void GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
+	bool GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
+	bool GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index);
 	void set_hov_with_odom();
 	void set_hov_with_rc();
-	void MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u);
+	bool MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u);
 
-	void SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des);
+	bool SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des);
 	bool toggle_offboard_mode(bool on_off); // It will only try to toggle once, so not blocked.
 	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
 	void reboot_FCU();
@@ -301,7 +314,11 @@ private:
 	bool PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f &path);
 	void PathReplan(const Eigen::Vector3d& start_pt,const Eigen::Vector3d& goal);
 	void EvaluateReplan();
-	
-};
+	bool consume_new_goal(Eigen::Vector3d &goal_out);
+	Eigen::Vector3d get_goal_position();
+	bool is_goal_reached();
+	void set_log_time(size_t idx, double value_ms);
+
+	};
 
 #endif

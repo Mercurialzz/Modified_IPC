@@ -22,7 +22,6 @@ Panels:
   - Class: rviz/Tool Properties
     Expanded:
       - /Publish Point1
-      - /3D Nav Goal1
     Name: Tool Properties
     Splitter Ratio: 0.5886790156364441
   - Class: rviz/Views
@@ -64,7 +63,9 @@ Visualization Manager:
       Marker Topic: /astar/path
       Name: Marker
       Namespaces:
-        {}
+        astar_path: true
+        set_points: true
+        short_path: true
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -116,7 +117,10 @@ Visualization Manager:
       Marker Topic: /ipc_node/visualization/ipc_sfc
       Name: MarkerArray
       Namespaces:
-        {}
+        cur_sfc edge: true
+        cur_sfc line: true
+        cur_sfc mesh: true
+        cur_sfc pt: true
       Queue Size: 4
       Value: true
     - Class: rviz/MarkerArray
@@ -124,6 +128,8 @@ Visualization Manager:
       Marker Topic: /ipc_node/rog_map/map_bound
       Name: MarkerArray
       Namespaces:
+        ESDF Map Text: true
+        ESDF Updating Range: true
         Local Map Origin: true
         Local Map Origin_text: true
         Local Map Range: true
@@ -161,8 +167,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 3.5
-        Min Value: -0.30000001192092896
+        Max Value: 3.9000000953674316
+        Min Value: 0.699999988079071
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -189,8 +195,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 9.696324348449707
-        Min Value: 0.4044877886772156
+        Max Value: 21.895233154296875
+        Min Value: 0.9926943182945251
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -261,7 +267,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 52.26227569580078
+      Distance: 111.32343292236328
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -269,17 +275,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 17.733367919921875
-        Y: -6.752033710479736
-        Z: 5.224635601043701
+        X: 29.507986068725586
+        Y: 6.909100532531738
+        Z: -18.986953735351562
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.2197966575622559
+      Pitch: 1.509796142578125
       Target Frame: <Fixed Frame>
-      Yaw: 1.5354045629501343
+      Yaw: 1.7804038524627686
     Saved: ~
 Window Geometry:
   Displays:
@@ -297,5 +303,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1237
-  X: 2327
-  Y: 203
+  X: 683
+  Y: 144

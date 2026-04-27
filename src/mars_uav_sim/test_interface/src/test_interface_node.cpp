@@ -50,7 +50,7 @@ Interface::Interface() {
             break;
         }
         cmd.header.stamp = cur_t;
-        cmd.header.frame_id = "world";
+        cmd.header.frame_id = "map";
 
         cmd.trajectory_id = 0;
         cmd.trajectory_flag = 1;
@@ -74,7 +74,7 @@ Interface::Interface() {
 void Interface::messageCallback(const geometry_msgs::PoseStampedConstPtr &msg) {
     // header
     cmd.header.stamp = msg->header.stamp;
-    cmd.header.frame_id = "world";
+    cmd.header.frame_id = "map";
 
     cmd.trajectory_id = 0;
     cmd.trajectory_flag = 1;
@@ -91,7 +91,7 @@ void Interface::messageCallback(const geometry_msgs::PoseStampedConstPtr &msg) {
     pub.publish(cmd);
 
     pos_cmd.header.stamp = msg->header.stamp;
-    pos_cmd.header.frame_id = "world";
+    pos_cmd.header.frame_id = "map";
     pos_cmd.pose.position.x = msg->pose.position.x;
     pos_cmd.pose.position.y = msg->pose.position.y;
     pos_cmd.pose.position.z = msg->pose.position.z;

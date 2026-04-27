@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
     n.param("color/min_height", cmp_.min_height, 0.0);
     n.param("color/max_height", cmp_.max_height, 5.0);
     n.param("color/map_type_name", cmp_.map_type_name, std::string("Turbo"));
-    n.param("color/frame_id", cmp_.frame_id, std::string("world"));
+    n.param("color/frame_id", cmp_.frame_id, std::string("map"));
     n.param("color/publish_rate", cmp_.publish_rate, 1.0);
     n.param("color/inverse_color", cmp_.inverse_color, false);
     cmp_.range = cmp_.max_height - cmp_.min_height;

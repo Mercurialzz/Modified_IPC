@@ -134,7 +134,7 @@ public:
         LoadParam("map/resolution", cfg_.resolution, 0.1);
         double hz;
         LoadParam("map/pub_freq", hz, 1.0);
-        LoadParam<string>("map/frame_id", cfg_.frame_id, "world");
+        LoadParam<string>("map/frame_id", cfg_.frame_id, "map");
         int seed;
         LoadParam("map/random_seed", seed, -1);
         rand_.eng = default_random_engine (seed);

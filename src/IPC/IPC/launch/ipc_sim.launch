@@ -1,0 +1,21 @@
+<launch>
+    <include file="$(find test_interface)/launch/map_rc.launch" />
+
+    <node pkg="ipc" type="ipc_node" name="ipc_node" output="screen">
+        <remap from="~odom"         to="/lidar_slam/odom"/>
+        <remap from="~imu"          to="/lidar_slam/imu"/>
+        <remap from="~goal"         to="/goal"/>
+        <remap from="~cmd"          to="/planning/pos_cmd"/>
+        <remap from="~astar_path"   to="/astar/path"/>
+        <remap from="~grid_map"     to="/astar/grid_map"/>
+        <remap from="~mpc_path"     to="/mpc/path"/>
+        <remap from="~goal_pub"     to="/mpc/goal"/>
+        <!-- <remap from="~visualization/ipc_sfc" to="/mkr_arr"/> -->
+
+        <rosparam command="load" file="$(find ipc)/config/param_sim.yaml"/>
+        <param name="config_path" value="$(find ipc)/config/param_sim.yaml" type="string" />
+    </node>
+
+    <node name="ipc_rviz" pkg="rviz" type="rviz" output="screen"
+          args="-d $(find ipc)/config/env.rviz"/>
+</launch>

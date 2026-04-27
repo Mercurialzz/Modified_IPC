@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
 	}
 
 	pcl::toROSMsg(pc_to_pub, pc2);
-	pc2.header.frame_id = "world";
+	pc2.header.frame_id = "map";
 	pc2.header.stamp = ros::Time::now();
 	dyn_cloud_pub.publish(pc2);
 	ros::Duration(0.1).sleep();

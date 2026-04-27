@@ -27,25 +27,25 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
     yaw_rate_limit_ = param.yaw_rate_limit;
     yaw_i_limit_ = param.yaw_i_limit;
 
+    odom_data.vel_in_body = param.odom_vel_in_body;
 
     goal_p_ = Eigen::Vector3d(param.goal_x, param.goal_y, param.goal_z);
 
     path_dis_ = param.path_dis;
     ref_dis_ = param.ref_dis;
     planning_horizon_ = param.planning_horizon;
+    sim_mode_ = param.simu_flag;
 
     Gravity_ << 0, 0, 9.81;
-    if (simu_flag_) {
-        thrust_ = 0.7;
-    } else {
-        thrust_ = hover_perc_;
-    }    
+
+    thrust_ = hover_perc_;
+
     thr2acc_ = 9.81 / thrust_;
+
 
     std::string file = ros::package::getPath("ipc") + "/config";
     write_time_.open((file+"/time_consuming.csv"), std::ios::out | std::ios::trunc);
     write_data_.open((file+"/log_data.csv"), std::ios::out | std::ios::trunc);
-    log_times_.resize(5, 1);
     write_time_ << "mapping(ms)" << ", " << "replan(ms)" << ", " << "sfc(ms)" << ", " << "mpc(ms)" << ", " << "df(ms)" << ", " <<std::endl;
 
     write_data_ << "time(ms)" << ", " << "vel_x" << ", " << "vel_y" << ", " << "vel_z" << ", " <<"vel_norm" << ", "
@@ -64,7 +64,7 @@ PlannerClass::PlannerClass(ros::NodeHandle &nh, Parameter_t &param_) : param(par
         ROS_INFO("ROGMap config path from launch file: %s", config_path.c_str());
     }
 
-    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path, log_times_[0]);
+    map_ptr_ = std::make_shared<rog_map::ROGMapROS>(nh, config_path, map_log_time_ms_);
     const auto &rog_map_cfg = map_ptr_->getMapConfig();
     ROS_INFO("ROGMap initialized successfully.");
 
@@ -151,34 +151,60 @@ void PlannerClass::StateUpdate(void)
         if (last_goal != goal_data.new_goal)
         {
             std::lock_guard<std::mutex> lock(goal_mutex_);
-            goal_p_ = goal_data.new_goal;
-            
             new_goal_flag_ = true;
-            
-            // 只有到达了目标点，才能切换到下一个目标
-            if(goal_reached_)
+
+            if (!param.use_waypoint_sequence)
             {
-                change_goal = -1 * change_goal;  // 切换目标标志
-                goal_reached_ = false;  // 重置到达标志
-                ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
+                goal_p_ = goal_data.new_goal;
+                goal_p_.z() = std::max(param.goal_z, goal_p_.z()); // 确保目标点的 z 不低于 param.goal_z
+                goal_reached_ = false;
+                ROS_INFO("[px4ctrl] Manual goal mode. New clicked goal: (%.2f, %.2f, %.2f)",
+                         goal_p_.x(), goal_p_.y(), goal_p_.z());
             }
-            
-            // 根据change_goal设置目标点
-            if(change_goal == 1)
+            else
             {
-                // 模式1：使用参数中的目标点
-                goal_p_.x() = param.goal_x;
-                goal_p_.y() = param.goal_y;
-                goal_p_.z() = param.goal_z;
-                ROS_INFO("[px4ctrl] New goal - Mode 1: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
-            }
-            else if(change_goal == -1)
-            {
-                // 模式2：回到原点上方
-                goal_p_.x() = 0.0;
-                goal_p_.y() = 0.0;
-                goal_p_.z() = param.goal_z;
-                ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+                // 只有到达了目标点，才能切换到下一个目标
+                if(goal_reached_)
+                {
+                    change_goal ++;  // 切换目标标志
+                    if(change_goal == 5) change_goal = 1;
+                    goal_reached_ = false;  // 重置到达标志
+                    ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
+                }
+
+                // 根据 change_goal 设置目标点。外部点击只作为“切换到下一个预设点”的触发信号。
+                if(change_goal == 1)
+                {
+                    goal_p_.x() = param.goal_x_1;
+                    goal_p_.y() = param.goal_y_1;
+                    goal_p_.z() = param.goal_z_1;
+                    ROS_INFO("[px4ctrl] Waypoint sequence mode - Mode 1: (%.2f, %.2f, %.2f)",
+                             goal_p_.x(), goal_p_.y(), goal_p_.z());
+                }
+                else if(change_goal == 2)
+                {
+                    goal_p_.x() = param.goal_x_2;
+                    goal_p_.y() = param.goal_y_2;
+                    goal_p_.z() = param.goal_z_2;
+                    ROS_INFO("[px4ctrl] Waypoint sequence mode - Mode 2: (%.2f, %.2f, %.2f)",
+                             goal_p_.x(), goal_p_.y(), goal_p_.z());
+                }
+                else if(change_goal == 3)
+                {
+                    goal_p_.x() = param.goal_x_3;
+                    goal_p_.y() = param.goal_y_3;
+                    goal_p_.z() = param.goal_z_3;
+                    ROS_INFO("[px4ctrl] Waypoint sequence mode - Mode 3: (%.2f, %.2f, %.2f)",
+                             goal_p_.x(), goal_p_.y(), goal_p_.z());
+                }
+                else if(change_goal == 4)
+                {
+                    goal_p_.x() = 0.0;
+                    goal_p_.y() = 0.0;
+                    goal_p_.z() = param.goal_z;
+                    ROS_INFO("[px4ctrl] Waypoint sequence mode - Mode 4: (%.2f, %.2f, %.2f)",
+                             goal_p_.x(), goal_p_.y(), goal_p_.z());
+                }
             }
         }
         last_goal = goal_data.new_goal;
@@ -186,13 +212,16 @@ void PlannerClass::StateUpdate(void)
     }
     
     // 检测无人机是否到达目标点
-    if(!goal_reached_)
     {
-        double distance_to_goal = (odom_data.p - goal_p_).norm();
-        if(distance_to_goal < goal_reach_threshold_)
+        std::lock_guard<std::mutex> lock(goal_mutex_);
+        if(!goal_reached_)
         {
-            goal_reached_ = true;
-            ROS_INFO("[px4ctrl] Goal reached! Distance: %.2f m. Ready to receive next goal.", distance_to_goal);
+            double distance_to_goal = (odom_data.p - goal_p_).norm();
+            if(distance_to_goal < goal_reach_threshold_)
+            {
+                goal_reached_ = true;
+                ROS_INFO("[px4ctrl] Goal reached! Distance: %.2f m. Ready to receive next goal.", distance_to_goal);
+            }
         }
     }
 }
@@ -228,7 +257,18 @@ void PlannerClass::process()
     Desired_State_t des(odom_data);
     bool rotor_low_speed_during_land = false;
 
-    if(param.takeoff_land.no_RC) {
+    if (sim_mode_) {
+        rc_dy_data.enter_hover_mode = (state == MANUAL_CTRL) && odom_is_received(now_time);
+        // In simulation command mode is always enabled; do not treat every
+        // pending goal as a repeated "enter command mode" edge.
+        rc_dy_data.enter_command_mode = false;
+        rc_dy_data.is_hover_mode = odom_is_received(now_time);
+        rc_dy_data.is_command_mode = true;
+        rc_dy_data.toggle_reboot = false;
+        state_data.current_state.connected = true;
+        state_data.current_state.mode = "OFFBOARD";
+    }
+    else if(param.takeoff_land.no_RC) {
         rc_dy_data.enter_command_mode = dy_data.enter_command_mode;
         rc_dy_data.enter_hover_mode = dy_data.enter_hover_mode;
         rc_dy_data.is_command_mode = dy_data.is_command_mode;
@@ -255,7 +295,7 @@ void PlannerClass::process()
                     ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). No odom!");
                     break;
                 }
-                if (goal_is_received())
+                if (!sim_mode_ && goal_is_received())
                 {
                     ROS_ERROR("[px4ctrl] Reject AUTO_HOVER(L2). You are sending goals before toggling into AUTO_HOVER, which is not allowed. Stop sending commands now!");
                     reset_goal_flag();
@@ -270,7 +310,9 @@ void PlannerClass::process()
                 state = AUTO_HOVER;
                 resetThrustMapping();
                 set_hov_with_odom();
-                toggle_offboard_mode(true);
+                if (!sim_mode_) {
+                    toggle_offboard_mode(true);
+                }
 
                 ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER(L2)\033[32m");
             }
@@ -302,6 +344,8 @@ void PlannerClass::process()
                     if (!rc_data.is_hover_mode || !rc_data.is_command_mode || !rc_data.check_centered())
                     {
                         ROS_ERROR("[px4ctrl] Reject AUTO_TAKEOFF. If you have your RC connected, keep its switches at \"auto hover\" and \"command control\" states, and all sticks at the center, then takeoff again.");
+                        ROS_ERROR("[px4ctrl] RC throttle channel ch[0] is not zero: %.3f",
+                                  rc_data.ch[0]);
                         while (ros::ok())
                         {
                             ros::Duration(0.01).sleep();
@@ -406,16 +450,27 @@ void PlannerClass::process()
             if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
             {
                 state = MANUAL_CTRL;
-                toggle_offboard_mode(false);
+                if (!sim_mode_) {
+                    toggle_offboard_mode(false);
+                }
 
                 ROS_WARN("[px4ctrl] AUTO_HOVER(L2) --> MANUAL_CTRL(L1)");
             }
             else if (rc_dy_data.is_command_mode && goal_is_received())
             {
-                if (state_data.current_state.mode == "OFFBOARD")
+                if (sim_mode_ || state_data.current_state.mode == "OFFBOARD")
                 {
+                    if (emergency_stop_flag_) {
+                        // A fresh goal should allow the planner to retry from
+                        // stable hover instead of getting stuck in emergency hover.
+                        emergency_stop_flag_ = false;
+                        path_blocked_flag_ = false;
+                        corridor_generation_failed_ = false;
+                        mpc_fail_count_ = 0;
+                        ROS_WARN("[Planner] New goal received during emergency hover. Retry planning.");
+                    }
                     state = CMD_CTRL;
-                    des = get_goal_des(goal_p_);
+                    des = get_goal_des(get_goal_position());
                     // des = get_cmd_des();
                     ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
                 }
@@ -452,7 +507,9 @@ void PlannerClass::process()
             if (!rc_dy_data.is_hover_mode || !odom_is_received(now_time))
             {
                 state = MANUAL_CTRL;
-                toggle_offboard_mode(false);
+                if (!sim_mode_) {
+                    toggle_offboard_mode(false);
+                }
 
                 ROS_WARN("[px4ctrl] From CMD_CTRL(L3) to MANUAL_CTRL(L1)!");
             }
@@ -466,7 +523,7 @@ void PlannerClass::process()
             }
             else
             {
-                des = get_goal_des(goal_p_);
+                des = get_goal_des(get_goal_position());
                 // des = get_cmd_des();
                 // CmdMode();
             }
@@ -570,6 +627,15 @@ void PlannerClass::process()
     }
 
     // STEP3: solve and update new control commands
+    if (emergency_stop_flag_ && state == CMD_CTRL)
+    {
+        state = AUTO_HOVER;
+        reset_goal_flag();
+        set_hov_with_odom();
+        des = get_hover_des();
+        ROS_ERROR_THROTTLE(1.0, "[Planner] Emergency protection active. Switch CMD_CTRL -> AUTO_HOVER.");
+    }
+
     if (rotor_low_speed_during_land) // used at the start of auto takeoff
     {
         motors_idling(imu_data, u);
@@ -585,6 +651,14 @@ void PlannerClass::process()
         {
             //MPCSetGoal(des.p, des.v, des.a, des.yaw);
             CmdMode(odom_data,des);
+            if (emergency_stop_flag_) {
+                state = AUTO_HOVER;
+                reset_goal_flag();
+                set_hov_with_odom();
+                des = get_hover_des();
+                MPCSetGoal(des.p, des.v, des.a, des.yaw);
+                ROS_ERROR_THROTTLE(1.0, "[Planner] Emergency protection active after CMD update. Force hover reference.");
+            }
         }
         MpcCalculate(odom_data,imu_data,u);
     }
@@ -607,9 +681,11 @@ void PlannerClass::process()
     // Eigen::Vector3d next_pt = Eigen::Vector3d(odom_data.p.x() + 0.5f, odom_data.p.y() , odom_data.p.z());
     // GenerateAPolytopeFromLine(odom_data.p,next_pt,planes, 0);
 
-    ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
+    // ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
     // STEP4: publish control commands to mavros
-    publish_bodyrate_ctrl(u, now_time);
+    if (!sim_mode_) {
+        publish_bodyrate_ctrl(u, now_time);
+    }
 
     // STEP5: Detect if the drone has landed
     land_detector(state, des, odom_data);
@@ -814,12 +890,46 @@ bool PlannerClass::cmd_is_received(const ros::Time &now_time)
 }
 bool PlannerClass::goal_is_received()
 {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
     return new_goal_flag_;
 }
 void PlannerClass::reset_goal_flag()
 {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
     new_goal_flag_ = false;
 }
+bool PlannerClass::consume_new_goal(Eigen::Vector3d &goal_out)
+{
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!new_goal_flag_) {
+        return false;
+    }
+    new_goal_flag_ = false;
+    goal_out = goal_p_;
+    return true;
+}
+
+Eigen::Vector3d PlannerClass::get_goal_position()
+{
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return goal_p_;
+}
+
+bool PlannerClass::is_goal_reached()
+{
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return goal_reached_;
+}
+
+void PlannerClass::set_log_time(size_t idx, double value_ms)
+{
+    if (idx >= log_times_.size()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    log_times_[idx] = value_ms;
+}
+
 bool PlannerClass::odom_is_received(const ros::Time &now_time)
 {
     return (now_time - odom_data.rcv_stamp).toSec() < param.msg_timeout.odom;
@@ -1037,9 +1147,16 @@ void PlannerClass::MPCPathPublish(std::vector<Eigen::Vector3d> &pt) {
     mpc_path_pub_.publish(msg);
 }
 void PlannerClass::WriteLogTime(void) {
-    for (int i = 0; i < log_times_.size(); i++) {
-        write_time_ << log_times_[i] << ", ";
-        log_times_[i] = 0.0;
+    const double map_log_ms = map_log_time_ms_.exchange(0.0);
+    std::array<double, 4> log_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(log_mutex_);
+        log_snapshot = log_times_;
+        log_times_.fill(0.0);
+    }
+    write_time_ << map_log_ms << ", ";
+    for (double val : log_snapshot) {
+        write_time_ << val << ", ";
     }
     write_time_ << std::endl;
 }
@@ -1162,19 +1279,27 @@ bool PlannerClass::estimateThrustModel(const Eigen::Vector3d &est_a,const Eigen:
     return false;
 }
 
-void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u)
+bool PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, Controller_Output_t& u)
 {
     // calculate model predict control algorithm
-    ros::WallTime mpc_start = ros::WallTime::now();
+    ros::Time mpc_start = ros::Time::now();
     mpc_->SetStatus(odom.p, odom.v, odom.a);
     bool success_flag = mpc_->Run();
-    log_times_[3] = (ros::WallTime::now() - mpc_start).toSec() * 1000.0;
+    set_log_time(2, (ros::Time::now() - mpc_start).toSec() * 1000.0);
 
     Eigen::Vector3d u_optimal, p_optimal, v_optimal, a_optimal, u_predict;
     Eigen::MatrixXd A1, B1;
     Eigen::VectorXd x_optimal = mpc_->X_0_;
     if (success_flag) {
         ROS_INFO_THROTTLE(1,"MPC SUCCESS");
+        const bool emergency_was_active = emergency_stop_flag_;
+        mpc_fail_count_ = 0;
+        if (!path_blocked_flag_ && !corridor_generation_failed_) {
+            emergency_stop_flag_ = false;
+            if (emergency_was_active) {
+                ROS_WARN("[Planner] Emergency cleared. AUTO_HOVER is stable and ready for a new goal.");
+            }
+        }
         last_mpc_time_ = ros::Time::now();
         for (int i = 0; i <= ctrl_delay_/mpc_->MPC_STEP; i++) {
             mpc_->GetOptimCmd(u_optimal, i);
@@ -1190,6 +1315,7 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         mpc_pos_ = p_optimal;
         if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
+        mpc_->UpdateOutputHistory(u_optimal);
 
         std::vector<Eigen::Vector3d> path;
         x_optimal = mpc_->X_0_;
@@ -1202,6 +1328,11 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         MPCPathPublish(path);
     } else {
         ROS_WARN("MPC CANT SLOVE!!");
+        mpc_fail_count_++;
+        if (mpc_fail_count_ >= mpc_fail_limit_) {
+            emergency_stop_flag_ = true;
+            ROS_ERROR_THROTTLE(1.0, "[Planner] MPC failed %d times continuously. Trigger emergency hover.", mpc_fail_count_);
+        }
         double delta_t = (ros::Time::now()-last_mpc_time_).toSec();
         if (delta_t >= mpc_->MPC_STEP) {
             mpc_ctrl_index_ += delta_t / mpc_->MPC_STEP;
@@ -1217,10 +1348,11 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
         a_optimal << x_optimal(6,0), x_optimal(7,0), x_optimal(8,0);
         if (!perfect_simu_flag_) CmdPublish(odom.p, v_optimal, a_optimal, u_optimal);
         else CmdPublish(p_optimal, v_optimal, a_optimal, u_optimal);
+        mpc_->UpdateOutputHistory(u_optimal);
     }
     
     // ROS_INFO_THROTTLE(1,"a_optimal ");
-    ros::WallTime df_start = ros::WallTime::now();
+    ros::Time df_start = ros::Time::now();
     estimateThrustModel(imu.a, odom.q);
     a_optimal = a_optimal + Gravity_; //为微分平坦转换公式做准备
     ComputeThrust(a_optimal,odom.q);
@@ -1234,7 +1366,8 @@ void PlannerClass::MpcCalculate(const Odom_Data_t& odom,const Imu_Data_t& imu, C
     while (timed_thrust_.size() > 100) {
         timed_thrust_.pop();
     }
-    log_times_[4] = (ros::WallTime::now() - df_start).toSec() * 1000.0;
+    set_log_time(3, (ros::Time::now() - df_start).toSec() * 1000.0);
+    return success_flag;
 }
 
 /*
@@ -1407,7 +1540,7 @@ bool PlannerClass::PathSearch(const Vec3f &start_pt,const Vec3f &goal,vec_Vec3f 
     return true;
 }
 
-void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
+bool PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d p2, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
 {
     // 使用 CorridorGenerator 的 GeneratePolytopeFromLine 方法
     super_utils::Line seed_line = std::make_pair(
@@ -1425,13 +1558,16 @@ void PlannerClass::GenerateAPolytopeFromLine(Eigen::Vector3d p1, Eigen::Vector3d
             
         }
         planes = polytope.GetPlanes();
+        return planes.rows() > 0;
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
         ROS_WARN_THROTTLE(1.0, "[Planner] GeneratePolytopeFromLine failed, returning axis-aligned bounding box");
+        planes.resize(0, 4);
+        return false;
     }
 }
 
-void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
+bool PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix<double, Eigen::Dynamic, 4>& planes, uint8_t index)
 {
     // 使用 CorridorGenerator 的 GeneratePolytopeFromPoint 方法
     // 使用GeneratePolytopeFromPoint
@@ -1444,21 +1580,26 @@ void PlannerClass::GenerateAPolytopeFromPoint(Eigen::Vector3d pos, Eigen::Matrix
         // ROS_INFO_THROTTLE(1.0, "[Planner] GeneratePolytopeFromPoint succeeded.");
         if(index == 0) vis_ptr_->vizCurSfc(polytope);
         planes = polytope.GetPlanes();
+        return planes.rows() > 0;
     } else {
         // 失败时返回轴对齐边界盒（与原逻辑一致）
         ROS_WARN_THROTTLE(1.0, "[Planner] GeneratePolytopeFromLine failed, returning axis-aligned bounding box");
+        planes.resize(0, 4);
+        return false;
     }
 }
 void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
 {
-        ros::WallTime t_start = ros::WallTime::now();  // 记录总执行开始时间
+        ros::Time t_start = ros::Time::now();  // 记录总执行开始时间
+        bool triggered_new_plan = false;
         // 1. 触发判断 (仅仅是设置标志位，耗时几乎为0)
-        if (new_goal_flag_) {
+        Eigen::Vector3d new_goal_pos;
+        if (consume_new_goal(new_goal_pos)) {
             // 新目标到来，强制触发一次
-            new_goal_flag_ = false;
+            triggered_new_plan = true;
             std::lock_guard<std::mutex> lk(data_mutex_);
             thread_start_pt_ = odom.p;
-            thread_goal_pt_ = goal_p_; // 或者是 des.p
+            thread_goal_pt_ = new_goal_pos;
             trigger_replan_flag_ = true;
             plan_cv_.notify_one();
         } else {
@@ -1470,14 +1611,27 @@ void PlannerClass::CmdMode(const Odom_Data_t& odom,const Desired_State_t& des)
         {
             // 加上大括号限制锁的范围，尽快释放
             std::lock_guard<std::mutex> lock(path_mutex_); 
-            
+
+            // The first cycle after a new goal arrives usually runs before the
+            // async planner has produced the first valid path. Hold the current
+            // pose for one control cycle instead of treating it as an emergency.
+            if (follow_path_.empty() && (triggered_new_plan || is_planning_)) {
+                yaw_r_ = yaw_;
+                for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+                    mpc_->SetGoal(odom.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
+                }
+                return;
+            }
+
             // 调用 SetSFCAndGoal 时，它内部会读取 follow_path_
             // 此时 follow_path_ 是线程安全的
-            SetSFCAndGoal(odom, des);
+            if (!SetSFCAndGoal(odom, des)) {
+                emergency_stop_flag_ = true;
+            }
         }
 }
 
-void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des)
+bool PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t& des)
 {
     // === 安全飞行走廊(SFC)生成和MPC目标设置 ===
     // 本函数的职责：
@@ -1494,14 +1648,16 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     // - mpc_->SetFSC(planes, i): 将第 i 个预测步的约束设置为 planes 所定义的凸多面体。
     // 注意：SFC 太“紧”或“排斥当前状态/参考”会使求解器报告 Primal Infeasible。
     //       下面的流程通过“先点后线、逐步扩展、必要回退”的策略降低不一致风险。
-    ros::WallTime sfc_start = ros::WallTime::now();
+    ros::Time sfc_start = ros::Time::now();
+    corridor_generation_failed_ = false;
     if (follow_path_.size() > 0) { // 存在有效路径
         have_path_ = true;
         last_have_path_ = true;
+
         // Step-A: 寻找路径上距离当前位置最近的点，作为跟踪起点
-        //         注意：最近点的离散抖动会导致参考索引整体平移，必要时可加滞后/滤波。
+        //         非新路径只允许索引向前推进，避免最近点搜索抖回旧路径段。
         double min_dis = 10000.0;
-        for (int i = 0; i < follow_path_.size(); i++) { 
+        for (int i = 0; i < static_cast<int>(follow_path_.size()); i++) {
             double dis = (odom.p - follow_path_[i]).norm();
             if (dis < min_dis) {
                 min_dis = dis;
@@ -1512,13 +1668,31 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         // Step-B: 计算走廊与覆盖范围（goal_in_sfc）
         //         根据当前是否接近末端、以及初始点生成的多面体，逐步扩展 SFC。
         //         goal_in_sfc 用于约束参考生成不超出安全覆盖。
-        int goal_in_sfc = astar_index_;
+        int corridor_seed_idx = astar_index_;
+        while (corridor_seed_idx < static_cast<int>(follow_path_.size()) &&
+               !astar_ptr_->CheckPointFree(follow_path_[corridor_seed_idx], true)) {
+            corridor_seed_idx++;
+        }
+
+        if (corridor_seed_idx >= static_cast<int>(follow_path_.size())) {
+            ROS_ERROR_THROTTLE(1.0, "[Planner] Path exists on prob map but no point escapes inflated obstacle. Hold current pose.");
+            yaw_r_ = yaw_;
+            for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+                mpc_->SetGoal(odom.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
+            }
+            set_log_time(1, (ros::Time::now() - sfc_start).toSec() * 1000.0);
+            return false;
+        }
+
+        int goal_in_sfc = corridor_seed_idx;
         if (follow_path_.size() - astar_index_ <= ref_dis_) { 
             // Case-1: 接近路径终点 → 在当前位置生成“点型”SFC，约束整条 horizon。
             // 该策略可防止末端“跳出安全区域”，简化为单一走廊约束。
             goal_in_sfc = follow_path_.size();
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes;
-            GenerateAPolytopeFromPoint(odom.p, planes, 0);
+            if (!GenerateAPolytopeFromPoint(odom.p, planes, 0) || planes.rows() == 0) {
+                corridor_generation_failed_ = true;
+            }
             for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
                 mpc_->SetFSC(planes, i);  // 为整个MPC预测地平线设置相同SFC
             }
@@ -1528,19 +1702,21 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             //   - 点型 SFC 易确保当前状态在走廊内，降低 infeasible 风险；
             //   - 在线型 SFC 扩展时，逐段验证连通性与安全，尽量扩大可行域。
             Eigen::Matrix<double, Eigen::Dynamic, 4> planes, last_planes;
-            // GenerateAPolytopeFromLine(follow_path_[astar_index_], follow_path_[astar_index_], planes, 0); 
-            GenerateAPolytopeFromPoint(follow_path_[astar_index_], planes, 0);
+            // GenerateAPolytopeFromLine(follow_path_[corridor_seed_idx], follow_path_[corridor_seed_idx], planes, 0);
+            if (!GenerateAPolytopeFromPoint(follow_path_[corridor_seed_idx], planes, 0) || planes.rows() == 0) {
+                corridor_generation_failed_ = true;
+            }
             last_planes = planes;
             int init_num = 0;
             
             // 检查当前位置是否在初始SFC内：若不在，则前段预测步需要“初始化跳过”几步，避免一开始就不可行。
             if (mpc_->IsInFSC(odom.p, planes) == false) { 
-                init_num = (odom.p - follow_path_[astar_index_]).norm() / path_dis_ / ref_dis_;
+                init_num = std::ceil((odom.p - follow_path_[corridor_seed_idx]).norm() / path_dis_ / ref_dis_);
                 ROS_INFO("\033[35m UAV is out sfc! init num is %d \033[0m", init_num);
             }
             
             // 找到第一个点型 SFC 能覆盖的最远路径点 first_id（作为“短走廊”的终点）
-            int first_id = astar_index_, mpc_goal_index = 0;
+            int first_id = corridor_seed_idx, mpc_goal_index = 0;
             for (int i = first_id+1; i < follow_path_.size(); i++) { 
                 if (mpc_->IsInFSC(follow_path_[i], planes)) {
                     first_id = i;
@@ -1548,14 +1724,14 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 } else {
                     // 回退一点确保安全：避免刚好落在边界外导致下一步不可行
                     first_id -= 0.2 / path_dis_;
-                    if (first_id < astar_index_) first_id = astar_index_;
+                    if (first_id < corridor_seed_idx) first_id = corridor_seed_idx;
                     break;
                 }
             }
             
             // 计算第一个 SFC 在 MPC 地平线中的终止索引（从 init_num 开始到 mpc_goal_index 为“短走廊”步）
-            mpc_goal_index = (first_id - astar_index_) / ref_dis_ + init_num + 1;
-            assert(first_id >= astar_index_);
+            mpc_goal_index = (first_id - corridor_seed_idx) / ref_dis_ + init_num + 1;
+            assert(first_id >= corridor_seed_idx);
             
             // 为 MPC 前段步骤设置点型 SFC：先保障“短走廊”段在安全内
             for (int i = init_num; i <= mpc_goal_index && i < mpc_->MPC_HORIZON; i++) {
@@ -1606,73 +1782,46 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
                 if (last_planes.rows() > 0) mpc_->SetFSC(last_planes, i);
             }
         }
-        // === MPC参考轨迹设置 ===
-        // 基于 goal_in_sfc 限制，生成每个预测步的参考位置与速度：
-        // - 位置：顺着路径按 ref_dis_ 递进，不超过 goal_in_sfc 与路径末端。
-        // - 速度：第一步用 (目标-当前)/dt，中间步用相邻参考点差分，最后一步置零（便于收敛）。
-        mpc_goals_.clear();
-        Eigen::Vector3d last_p_ref;
-
-        for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
-            // 计算MPC每步的参考位置索引
-            int index = astar_index_ + i * ref_dis_;
-            // if (index >= goal_in_sfc) index = goal_in_sfc;      // 不超过SFC覆盖范围
-            if (index >= follow_path_.size()) index = follow_path_.size() - 1;  // 不超过路径长度
-            
-            //计算参考速度
-            Eigen::Vector3d v_r(0, 0, 0);
-            if (i == 0) v_r = (follow_path_[index] - odom.p) / mpc_->MPC_STEP;         // 第一步：当前到目标
-            else if (i == mpc_->MPC_HORIZON - 1) v_r.setZero();                           // 最后一步：速度为零
-            else v_r = (follow_path_[index] - last_p_ref) / mpc_->MPC_STEP;           // 中间步：点间速度
-            last_p_ref = follow_path_[index];
-
-            mpc_->SetGoal(follow_path_[index], v_r, Eigen::Vector3d::Zero(), i);
-            // std::cout << "mpc goal " << i << ": " << follow_path_[index].transpose() << " v: " << v_r.transpose() << std::endl;
-            mpc_goals_.push_back(follow_path_[index]);
-            
+        if (corridor_generation_failed_) {
+            ROS_ERROR_THROTTLE(1.0, "[Planner] Corridor generation failed. Hold current pose.");
         }
+        // === MPC参考轨迹设置（回退为 IPC 初版逻辑）===
+        // 直接沿当前 follow_path_ 采样，不做新旧轨迹过渡拼接。
+        mpc_goals_.clear();
+        for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+            int index = astar_index_ + i * ref_dis_;
+            if (index >= goal_in_sfc) index = goal_in_sfc;
+            if (index >= static_cast<int>(follow_path_.size())) index = static_cast<int>(follow_path_.size()) - 1;
+            mpc_goals_.push_back(follow_path_[index]);
+        }
+        if (corridor_generation_failed_) {
+            yaw_r_ = yaw_;
+            for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+                mpc_->SetGoal(odom.p, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
+            }
+            set_log_time(1, (ros::Time::now() - sfc_start).toSec() * 1000.0);
+            return false;
+        }
+
+        Eigen::Vector3d last_p_ref;
+        for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
+            Eigen::Vector3d v_r(0, 0, 0);
+            if (i == 0) v_r = (mpc_goals_[i] - odom.p) / mpc_->MPC_STEP;
+            else if (i == mpc_->MPC_HORIZON - 1) v_r.setZero();
+            else v_r = (mpc_goals_[i] - last_p_ref) / mpc_->MPC_STEP;
+            last_p_ref = mpc_goals_[i];
+            mpc_->SetGoal(mpc_goals_[i], v_r, Eigen::Vector3d::Zero(), i);
+        }
+
         //发布目标点可视化
         AstarPublish(mpc_goals_,3,0.1);
-
-        // === 偏航角控制 ===
-        // 此处采用“偏航指向路径终点方向”的简化策略；
-        // 若需更稳定的航向控制，可用“动态前瞻切线 + 终点融合 + 变化率限幅”的策略（见先前建议）。
-        // 航向指向路径切线方向：从当前位置在路径上取一个前瞻点，计算二维方向
-        if (follow_path_.size() >= 2) {
-            // 使用路径切线/前瞻点来确定偏航：比指向终点更能反映局部轨迹方向
-            // L: 前瞻距离（米），按 path_dis_ 比例选择（可调）
-            const double L = std::max(0.2, 10.0 * path_dis_);
-            const int lookahead_steps = std::max(1, int(L / path_dis_));
-
-            // i0: 当前参考点索引（取 astar_index_，确保不越界）
-            int i0 = std::min(astar_index_, int(follow_path_.size()) - 2);
-            int i1 = std::min(i0 + lookahead_steps, int(follow_path_.size()) - 1);
-
-            Eigen::Vector2d dir(
-                follow_path_[i1].x() - follow_path_[i0].x(),
-                follow_path_[i1].y() - follow_path_[i0].y()
-            );
-
-            if (dir.norm() > 1e-3) {
-                double yaw_target = std::atan2(dir.y(), dir.x());
-
-                // 对 yaw 变化进行解缠和速率限制，避免剧烈跳变
-                double yaw_error = yaw_target - yaw_r_;
-                while (yaw_error > M_PI) yaw_error -= 2.0 * M_PI;
-                while (yaw_error < -M_PI) yaw_error += 2.0 * M_PI;
-
-                // 最大允许的 yaw 变化基于 yaw_rate_limit_ 和 MPC 步长
-                double max_delta = yaw_rate_limit_ * std::max(1e-3, mpc_->MPC_STEP);
-                if (yaw_error > max_delta) yaw_error = max_delta;
-                if (yaw_error < -max_delta) yaw_error = -max_delta;
-
-                yaw_r_ = yaw_r_ + yaw_error;
-                // 保持 [-pi, pi]
-                if (yaw_r_ > M_PI) yaw_r_ -= 2.0 * M_PI;
-                if (yaw_r_ < -M_PI) yaw_r_ += 2.0 * M_PI;
-            }
-            // 若 dir 太短则保持原有 yaw_r_ 不变，避免抖动
+        // 偏航控制回退为 IPC 初版：朝向路径终点
+        if (astar_index_ < static_cast<int>(follow_path_.size()) - 0.3 / path_dis_) {
+            yaw_r_ = std::atan2(follow_path_.back().y() - odom.p.y(),
+                                follow_path_.back().x() - odom.p.x());
         }
+        set_log_time(1, (ros::Time::now() - sfc_start).toSec() * 1000.0);
+        return true;
     } else { 
         // 无有效路径：
         // - 维持当前位置的参考，避免 MPC 追踪到不可预期点；
@@ -1692,13 +1841,16 @@ void PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             mpc_->SetGoal(pos_now, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
         } //debug 这里有问题
     }
-    log_times_[2] = (ros::WallTime::now() - sfc_start).toSec() * 1000.0;  // 记录SFC生成耗时
+    set_log_time(1, (ros::Time::now() - sfc_start).toSec() * 1000.0);  // 记录SFC生成耗时
+    return false;
 }
 void PlannerClass::EvaluateReplan()
 {
     // 0. 基础状态检查
     if (is_planning_) return; // 正在规划中，勿扰
-    if (!have_path_ || goal_reached_) return;
+    if (!have_path_ || is_goal_reached()) return;
+
+    const Eigen::Vector3d current_goal = get_goal_position();
 
     bool need_plan = false;
 
@@ -1726,11 +1878,13 @@ void PlannerClass::EvaluateReplan()
     if (!remain_path.empty()) {
         // 加地图读锁 (C++14 写法)
         std::shared_lock<std::shared_timed_mutex> lock(map_ptr_->map_mutex_);
+        path_blocked_flag_ = false;
         
         //  重规划检测 (保持原样，默认 true，检查膨胀地图) ---
         // 只要侵入膨胀层，就准备重规划，保持舒适距离
         if (astar_ptr_->CheckPathFree(remain_path, true) == false) { // 显式写 true 也可以
             need_plan = true;
+            path_blocked_flag_ = true;
         }
     }
     // 4. 路径耗尽检测 
@@ -1741,7 +1895,7 @@ void PlannerClass::EvaluateReplan()
         double current_remain_dist = remain_path.size() * path_dis_;
         
         // B. 计算离全局终点的直线距离
-        double dist_to_global_goal = (goal_p_ - odom_data.p).norm();
+        double dist_to_global_goal = (current_goal - odom_data.p).norm();
 
         // C. 触发条件：
         //    1. 剩余路径不够长了 (例如只剩 15米，大概够飞 3-5秒)
@@ -1760,7 +1914,7 @@ void PlannerClass::EvaluateReplan()
         {
             std::lock_guard<std::mutex> lk(data_mutex_);
             thread_start_pt_ = odom_data.p; 
-            thread_goal_pt_ = goal_p_;      
+            thread_goal_pt_ = current_goal;
             trigger_replan_flag_ = true;
         }
         plan_cv_.notify_one(); // 唤醒规划线程！
@@ -1774,6 +1928,68 @@ void PlannerClass::MPCSetGoal(const Eigen::Vector3d& goal_pos,const Eigen::Vecto
         mpc_->SetGoal(goal_pos, goal_vel, goal_acc, i);
     }
     yaw_r_ = yaw;
+}
+
+bool PlannerClass::CommitFallbackPathToSafePoint(const Eigen::Vector3d &current_pos,
+                                                 Eigen::Vector3d &safe_point)
+{
+    vec_Vec3f path_copy;
+    int start_idx = 0;
+    {
+        std::lock_guard<std::mutex> path_lock(path_mutex_);
+        if (follow_path_.empty()) {
+            return false;
+        }
+        path_copy = follow_path_;
+        start_idx = std::min(std::max(astar_index_, 0), std::max(int(follow_path_.size()) - 1, 0));
+    }
+
+    int first_blocked_idx = -1;
+    {
+        std::shared_lock<std::shared_timed_mutex> map_lock(map_ptr_->map_mutex_);
+        for (int i = start_idx; i < static_cast<int>(path_copy.size()); ++i) {
+            if (!astar_ptr_->CheckPointFree(path_copy[i], true)) {
+                first_blocked_idx = i;
+                break;
+            }
+        }
+    }
+
+    if (first_blocked_idx <= 0) {
+        return false;
+    }
+
+    const int backoff_steps = std::max(1, static_cast<int>(std::ceil(0.5 / std::max(path_dis_, 1e-3))));
+    int safe_idx = std::max(start_idx, first_blocked_idx - backoff_steps);
+
+    {
+        std::shared_lock<std::shared_timed_mutex> map_lock(map_ptr_->map_mutex_);
+        while (safe_idx >= start_idx && !astar_ptr_->CheckPointFree(path_copy[safe_idx], true)) {
+            --safe_idx;
+        }
+    }
+
+    if (safe_idx < start_idx) {
+        return false;
+    }
+
+    vec_Vec3f trimmed_path(path_copy.begin(), path_copy.begin() + safe_idx + 1);
+    if (trimmed_path.empty()) {
+        return false;
+    }
+
+    safe_point = trimmed_path.back();
+    {
+        std::lock_guard<std::mutex> path_lock(path_mutex_);
+        follow_path_ = trimmed_path;
+        astar_index_ = 0;
+        path_version_++;
+        path_blocked_flag_ = false;
+        corridor_generation_failed_ = false;
+    }
+
+    AstarPublish(trimmed_path, 2, path_dis_);
+    return true;
 }
 
 void PlannerClass::PlanningThreadFunc()
@@ -1817,16 +2033,16 @@ void PlannerClass::PlanningThreadFunc()
         bool success = false;
         Vec3f s_pos(start_pt.x(), start_pt.y(), start_pt.z());
         Vec3f g_pos(target_pt.x(), target_pt.y(), target_pt.z());
-        ros::WallTime t0 = ros::WallTime::now();
+        ros::Time t0 = ros::Time::now();
         {
-            ros::WallTime t1 = ros::WallTime::now();
+            ros::Time t1 = ros::Time::now();
             std::shared_lock<std::shared_timed_mutex> lock(map_ptr_->map_mutex_);
             success = PathSearch(s_pos, g_pos, temp_astar_path);
-            ros::WallTime t2 = ros::WallTime::now();
+            ros::Time t2 = ros::Time::now();
 
             double wait_time = (t1 - t0).toSec() * 1000.0; // 等待耗时
             double calc_time = (t2 - t1).toSec() * 1000.0; // 计算耗时
-            log_times_[1] = calc_time;
+            set_log_time(0, calc_time);
             // ROS_INFO("A* Wait: %.2f ms, Calc: %.2f ms", wait_time, calc_time);
         }
 
@@ -1860,21 +2076,31 @@ void PlannerClass::PlanningThreadFunc()
             astar_path_ = temp_astar_path;   // 用于可视化
             waypoints_ = temp_waypoints;     // 用于可视化
             follow_path_ = temp_follow_path; // 核心控制路径
-            
-            // 重置索引，告诉 MPC 有新路径来了
-            // 注意：这里需要精细处理，如果是在飞行中重规划，
-            // 最好找到新路径上距离当前位置最近的点作为 astar_index_
-            // 但简单起见，如果新路径起点就是当前位置，重置为0即可
+            path_blocked_flag_ = false;
+            corridor_generation_failed_ = false;
             astar_index_ = 0; 
+            path_version_++;
             
             // 可视化 (可以在这里发布，或者在主线程发布)
             AstarPublish(astar_path_, 0, 0.1);
             AstarPublish(follow_path_, 2, path_dis_);
         } else {
-             ROS_WARN("Async A* failed.");
-             std::lock_guard<std::mutex> path_lock(path_mutex_);
-             follow_path_.clear(); 
-             astar_index_ = 0;
+             // Keep the previous committed path if replanning fails. Clearing
+             // the path causes the controller to abruptly fall back to holding
+             // position, which is perceived as a twitch.
+             ROS_WARN("Async A* failed. Keep the current committed path.");
+             if (path_blocked_flag_) {
+                 Eigen::Vector3d safe_point;
+                 if (CommitFallbackPathToSafePoint(start_pt, safe_point) &&
+                     (safe_point - start_pt).norm() > 0.3) {
+                     emergency_stop_flag_ = false;
+                     ROS_WARN("[Planner] Replan failed. Continue on committed path to safe pre-obstacle point (%.2f m away) and retry.",
+                              (safe_point - start_pt).norm());
+                 } else {
+                     emergency_stop_flag_ = true;
+                     ROS_ERROR_THROTTLE(1.0, "[Planner] Replan failed while committed path is blocked and no forward safe point is available. Trigger emergency hover.");
+                 }
+             }
         }
 
         is_planning_ = false;
