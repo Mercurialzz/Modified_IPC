@@ -589,6 +589,33 @@ namespace vis_interface {
             mkr_arr.markers.push_back(line_list);
         }
 
+        static void addTextToMarkerArray(visualization_msgs::MarkerArray &mkr_ary,
+                                         const Vec3f &pos,
+                                         const std::string &text,
+                                         const std::string &ns,
+                                         const Color &color,
+                                         const double &scale = 0.5) {
+            visualization_msgs::Marker marker;
+            marker.header.frame_id = DEFAULT_FRAME_ID;
+            marker.header.stamp = ros::Time::now();
+            marker.ns = ns;
+            marker.id = 0;
+            marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+            marker.action = visualization_msgs::Marker::ADD;
+            
+            marker.pose.position.x = pos.x();
+            marker.pose.position.y = pos.y();
+            marker.pose.position.z = pos.z();
+            marker.pose.orientation.w = 1.0;
+            
+            marker.scale.z = scale; // 文本高度
+            
+            marker.color = color;
+            marker.text = text;
+            
+            mkr_ary.markers.push_back(marker);
+        }
+
     };
 
 }

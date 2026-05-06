@@ -119,7 +119,9 @@ namespace vis_interface{
         virtual double getSimTime() = 0;
 
         virtual void getSimTime(int32_t &sec, uint32_t &nsec) = 0;
-
+        
+        /* [新增] Velocity Visualization */
+        virtual void vizVelocity(const Vec3f& position, const double& velocity, const std::string& ns = "velocity_text") = 0;
         /*===================For viz interface =======================*/
         virtual void vizFrontendPath(const vec_Vec3f & path) = 0;
 
