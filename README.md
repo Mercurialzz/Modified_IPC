@@ -141,17 +141,30 @@ roslaunch ipc ipc_sim.launch
 
 ### 6.2 真机飞行
 
+共需 6 个终端，按顺序启动：
+
 ```bash
-# 终端1: 启动 MAVROS
+# 终端1: 启动 Livox MID360 激光雷达驱动
+./start_mid360.sh
+
+# 终端2: 启动 MAVROS (PX4 飞控通信)
 ./start_mavros.sh
 
-# 终端2: 启动 IPC
+# 终端3: 启动 Point-LIO (激光惯性里程计)
+./start_pointlio.sh
+
+# 终端4: 启动坐标转换节点 (trans_odom_node)
+./start_trans.sh
+
+# 终端5: 启动 IPC 主程序
 source devel/setup.bash
 roslaunch ipc ipc.launch
 
-# 终端3: 起飞
-./takeoff.sh
+# 终端6: 发送起飞指令
+./start_takeoff.sh
 ```
+
+> **注意**：定位链路为 MID360 → Point-LIO → trans_odom → IPC，必须按顺序依次启动。起飞前确保定位已收敛，MAVROS 与飞控通信正常。
 
 ### 6.3 突然避障测试
 
