@@ -885,11 +885,44 @@ namespace path_search {
         waypoint.clear();
         SimplifyPath(astar_path, waypoint);
 
+        auto ShortcutHasClearance = [&](const rog_map::Vec3f &p1, const rog_map::Vec3f &p2) {
+            if (!CheckLineObstacleFree(p1, p2)) {
+                return false;
+            }
+            if (cfg_.floyd_safe_distance <= 0.0) {
+                return true;
+            }
+
+            std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+            const rog_map::Vec3f vec = p2 - p1;
+            const double seg_len = vec.norm();
+            if (seg_len < 1e-6) {
+                return true;
+            }
+
+            // 比常规碰撞检查更密集采样，防止捷径从障碍边缘擦过。
+            const double sample_step = std::max(1e-3, md_.resolution * 0.5);
+            const int sample_num = std::max(1, static_cast<int>(seg_len / sample_step));
+            for (int i = 0; i <= sample_num; i++) {
+                const double ratio = static_cast<double>(i) / static_cast<double>(sample_num);
+                const rog_map::Vec3f pos = p1 + vec * ratio;
+                if (!insideLocalMap(pos)) {
+                    continue;
+                }
+
+                const double dist_to_obs = map_ptr_->getDist(pos);
+                if (dist_to_obs < cfg_.floyd_safe_distance) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
         // Floyd 两次迭代：若后点与前点直线可达，移除中间拐点
         for (int time = 0; time < 2; time++) {
             for (int i = static_cast<int>(waypoint.size()) - 1; i > 0; i--) {
                 for (int j = 0; j < i - 1; j++) {
-                    if (CheckLineObstacleFree(waypoint[i], waypoint[j])) {
+                    if (ShortcutHasClearance(waypoint[i], waypoint[j])) {
                         for (int k = i - 1; k > j; k--) {
                             waypoint.erase(waypoint.begin() + k);
                         }

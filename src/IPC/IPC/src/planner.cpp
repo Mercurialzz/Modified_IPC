@@ -156,7 +156,7 @@ void PlannerClass::StateUpdate(void)
             if (!param.use_waypoint_sequence)
             {
                 goal_p_ = goal_data.new_goal;
-                goal_p_.z() = std::max(param.goal_z, goal_p_.z()); // 确保目标点的 z 不低于 param.goal_z
+                goal_p_.z() = param.goal_z; //std::max(param.goal_z, goal_p_.z()); // 确保目标点的 z 不低于 param.goal_z
                 goal_reached_ = false;
                 ROS_INFO("[px4ctrl] Manual goal mode. New clicked goal: (%.2f, %.2f, %.2f)",
                          goal_p_.x(), goal_p_.y(), goal_p_.z());
@@ -1653,6 +1653,7 @@ bool PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
     if (follow_path_.size() > 0) { // 存在有效路径
         have_path_ = true;
         last_have_path_ = true;
+        const bool path_switched = (path_version_ != active_path_version_);
 
         // Step-A: 寻找路径上距离当前位置最近的点，作为跟踪起点
         //         非新路径只允许索引向前推进，避免最近点搜索抖回旧路径段。
@@ -1794,6 +1795,33 @@ bool PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             if (index >= static_cast<int>(follow_path_.size())) index = static_cast<int>(follow_path_.size()) - 1;
             mpc_goals_.push_back(follow_path_[index]);
         }
+
+        // 线性混合旧/新 mpc_goals 临时关闭。
+
+        // 根因修复：重规划首段施加状态连续约束（C1/C2 近似）
+        // 以当前 odom 的 p/v/a 做短时运动学外推，与新路径前几步位置融合，避免切换瞬间参考跳变。
+        const int c2_steps = path_switched
+            ? std::min(std::max(replan_transition_steps_ + 1, 2), mpc_->MPC_HORIZON)
+            : 0;
+        for (int i = 0; i < c2_steps && i < static_cast<int>(mpc_goals_.size()); i++) {
+            const double t = (i + 1) * mpc_->MPC_STEP;
+            const Eigen::Vector3d p_rollout = odom.p + odom.v * t + 0.5 * odom.a * t * t;
+            const double w = static_cast<double>(i + 1) / static_cast<double>(c2_steps + 1);
+            mpc_goals_[i] = (1.0 - w) * p_rollout + w * mpc_goals_[i];
+        }
+        // 计数器驱动的帧间过渡：路径切换后 N 帧内线性混合新旧参考轨迹
+        if (path_switched) {
+            blend_counter_ = blend_total_steps_;
+        }
+        if (blend_counter_ > 0 && prev_mpc_goals_.size() == mpc_goals_.size()) {
+            const double w = 1.0 - static_cast<double>(blend_counter_) / blend_total_steps_;
+            for (size_t i = 0; i < mpc_goals_.size(); i++) {
+                mpc_goals_[i] = (1.0 - w) * prev_mpc_goals_[i] + w * mpc_goals_[i];
+            }
+            blend_counter_--;
+        }
+        prev_mpc_goals_ = mpc_goals_;
+
         if (corridor_generation_failed_) {
             yaw_r_ = yaw_;
             for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
@@ -1804,22 +1832,61 @@ bool PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
         }
 
         Eigen::Vector3d last_p_ref;
+        vec_Vec3f current_v_refs;
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
             Eigen::Vector3d v_r(0, 0, 0);
             if (i == 0) v_r = (mpc_goals_[i] - odom.p) / mpc_->MPC_STEP;
             else if (i == mpc_->MPC_HORIZON - 1) v_r.setZero();
             else v_r = (mpc_goals_[i] - last_p_ref) / mpc_->MPC_STEP;
+
+            // 在重规划交接窗口内对速度参考做连续化，减小 jerk 激发。
+            if (path_switched && i < c2_steps) {
+                const double t = (i + 1) * mpc_->MPC_STEP;
+                const Eigen::Vector3d v_rollout = odom.v + odom.a * t;
+                const double wv = static_cast<double>(i + 1) / static_cast<double>(c2_steps + 1);
+                v_r = (1.0 - wv) * v_rollout + wv * v_r;
+            }
+
+            // 帧间速度参考低通滤波，抑制高速下重规划的速度跳变
+            if (prev_v_refs_.size() == mpc_goals_.size()) {
+                const double vel_alpha = path_switched ? 0.3 : 0.8;
+                v_r = vel_alpha * v_r + (1.0 - vel_alpha) * prev_v_refs_[i];
+            }
+            current_v_refs.push_back(v_r);
+
             last_p_ref = mpc_goals_[i];
             mpc_->SetGoal(mpc_goals_[i], v_r, Eigen::Vector3d::Zero(), i);
         }
+        prev_v_refs_ = current_v_refs;
 
         //发布目标点可视化
         AstarPublish(mpc_goals_,3,0.1);
-        // 偏航控制回退为 IPC 初版：朝向路径终点
-        if (astar_index_ < static_cast<int>(follow_path_.size()) - 0.3 / path_dis_) {
+
+        // yaw 参考沿轨迹前瞻切线方向，过渡期内加严限速抑制重规划跳变
+        if (follow_path_.size() >= 2) {
+            const int i0 = std::min(std::max(astar_index_, 0), static_cast<int>(follow_path_.size()) - 2);
+            const int lookahead_steps = std::max(1, static_cast<int>(std::ceil(3.0 / std::max(path_dis_, 1e-3))));
+            const int i1 = std::min(i0 + lookahead_steps, static_cast<int>(follow_path_.size()) - 1);
+            const Eigen::Vector2d dir(follow_path_[i1].x() - follow_path_[i0].x(),
+                                      follow_path_[i1].y() - follow_path_[i0].y());
+            if (dir.norm() > 1e-3) {
+                double yaw_target = std::atan2(dir.y(), dir.x());
+                double yaw_err = yaw_target - yaw_r_;
+                while (yaw_err > M_PI) yaw_err -= 2.0 * M_PI;
+                while (yaw_err < -M_PI) yaw_err += 2.0 * M_PI;
+                const double yaw_step_limit = yaw_rate_limit_ * mpc_->MPC_STEP;
+                if (yaw_err > yaw_step_limit) yaw_err = yaw_step_limit;
+                if (yaw_err < -yaw_step_limit) yaw_err = -yaw_step_limit;
+                yaw_r_ += yaw_err;
+                while (yaw_r_ > M_PI) yaw_r_ -= 2.0 * M_PI;
+                while (yaw_r_ < -M_PI) yaw_r_ += 2.0 * M_PI;
+            }
+        } else if (!follow_path_.empty()) {
             yaw_r_ = std::atan2(follow_path_.back().y() - odom.p.y(),
                                 follow_path_.back().x() - odom.p.x());
         }
+
+        active_path_version_ = path_version_;
         set_log_time(1, (ros::Time::now() - sfc_start).toSec() * 1000.0);
         return true;
     } else { 
@@ -1836,7 +1903,7 @@ bool PlannerClass::SetSFCAndGoal(const Odom_Data_t& odom, const Desired_State_t&
             last_have_path_ = have_path_;
         }
         // 无有效路径：保持在当前位置
-        yaw_r_ = yaw_now; //debug
+        yaw_r_ = yaw_now;
         for (int i = 0; i < mpc_->MPC_HORIZON; i++) {
             mpc_->SetGoal(pos_now, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), i);
         } //debug 这里有问题
@@ -2075,10 +2142,72 @@ void PlannerClass::PlanningThreadFunc()
             std::lock_guard<std::mutex> path_lock(path_mutex_);
             astar_path_ = temp_astar_path;   // 用于可视化
             waypoints_ = temp_waypoints;     // 用于可视化
-            follow_path_ = temp_follow_path; // 核心控制路径
+
+            vec_Vec3f committed_path = temp_follow_path;
+            if (!follow_path_.empty() && !temp_follow_path.empty()) {
+                const int old_size = static_cast<int>(follow_path_.size());
+                const int old_start = std::min(std::max(astar_index_, 0), old_size - 1);
+                const int hold_steps = std::max(1, static_cast<int>(std::ceil(0.8 / std::max(path_dis_, 1e-3))));
+                const int old_end = std::min(old_start + hold_steps, old_size - 1);
+                const Vec3f join_pt = follow_path_[old_end];
+
+                int new_join_idx = 0;
+                double best_dist = 1e9;
+                for (int i = 0; i < static_cast<int>(temp_follow_path.size()); i++) {
+                    const double d = (temp_follow_path[i] - join_pt).norm();
+                    if (d < best_dist) {
+                        best_dist = d;
+                        new_join_idx = i;
+                    }
+                }
+
+                // 仅当连接点距离可接受时执行拼接，避免错误拼接到远离段。
+                const double stitch_dist_th = std::max(0.8, 4.0 * path_dis_);
+                if (best_dist <= stitch_dist_th) {
+                    committed_path.clear();
+                    committed_path.insert(committed_path.end(),
+                                          follow_path_.begin() + old_start,
+                                          follow_path_.begin() + old_end + 1);
+
+                    if (!committed_path.empty() &&
+                        new_join_idx < static_cast<int>(temp_follow_path.size()) &&
+                        (committed_path.back() - temp_follow_path[new_join_idx]).norm() < 1e-3) {
+                        new_join_idx++;
+                    }
+                    if (new_join_idx < static_cast<int>(temp_follow_path.size())) {
+                        committed_path.insert(committed_path.end(),
+                                              temp_follow_path.begin() + new_join_idx,
+                                              temp_follow_path.end());
+                    }
+                    if (committed_path.empty()) {
+                        committed_path = temp_follow_path;
+                    }
+                    // 对拼接点邻域做局部几何平滑，消除新旧路径方向突变产生的尖角
+                    if (committed_path.size() > 2) {
+                        const int join_idx = old_end - old_start;
+                        const int smooth_radius = std::max(1, static_cast<int>(std::ceil(0.3 / std::max(path_dis_, 1e-3))));
+                        const int s0 = std::max(0, join_idx - smooth_radius);
+                        const int s1 = std::min(static_cast<int>(committed_path.size()) - 1, join_idx + smooth_radius);
+                        vec_Vec3f smoothed = committed_path;
+                        for (int i = s0; i <= s1; i++) {
+                            Vec3f avg(0, 0, 0);
+                            double w_sum = 0.0;
+                            for (int j = std::max(s0, i - smooth_radius); j <= std::min(s1, i + smooth_radius); j++) {
+                                const double w = 1.0 / (1.0 + std::abs(i - j));
+                                avg = avg + committed_path[j] * w;
+                                w_sum += w;
+                            }
+                            if (w_sum > 0) smoothed[i] = avg / w_sum;
+                        }
+                        committed_path = smoothed;
+                    }
+                }
+            }
+
+            follow_path_ = committed_path; // 核心控制路径（已连续化交接）
             path_blocked_flag_ = false;
             corridor_generation_failed_ = false;
-            astar_index_ = 0; 
+            astar_index_ = 0;
             path_version_++;
             
             // 可视化 (可以在这里发布，或者在主线程发布)

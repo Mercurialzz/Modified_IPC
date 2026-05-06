@@ -215,12 +215,16 @@ private:
 	int astar_index_{0};
     std::uint64_t path_version_{0};
     std::uint64_t active_path_version_{0};
-    const int replan_transition_steps_{3};
+    const int replan_transition_steps_{6};
     vec_Vec3f astar_path_;
     vec_Vec3f waypoints_;
     vec_Vec3f follow_path_;
     vec_Vec3f replan_path_;
     vec_Vec3f mpc_goals_;
+    vec_Vec3f prev_mpc_goals_;
+    int blend_counter_{0};
+    static constexpr int blend_total_steps_{15};
+    vec_Vec3f prev_v_refs_;
 
 	bool have_path_{false},last_have_path_{false};
 	int change_goal{1};  // 目标点切换标志：1表示第一个目标，-1表示第二个目标
@@ -232,6 +236,8 @@ private:
     double P_{100.0};
     Eigen::Vector3d Gravity_;
     std::queue<std::pair<ros::Time, double>> timed_thrust_;
+	Eigen::Vector3d prev_v_ref_cmd_{Eigen::Vector3d::Zero()};
+	bool has_prev_v_ref_cmd_{false};
 
     std::deque<pcl::PointCloud<pcl::PointXYZ>> vec_cloud_;
     pcl::PointCloud<pcl::PointXYZ> static_map_;
