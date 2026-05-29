@@ -11,7 +11,7 @@ ctrl_delay:    0.0
 
 thrust_limit:  0.9
 hover_esti:    true
-hover_perc:    0.4
+hover_perc:    0.45
 
 visualization_en: true
 corridor_bound_dis: 5.0
@@ -33,7 +33,7 @@ yaw_rate_limit: 5.0
 
 ## 45，0，0/ 50，0，0 / 43 -30 1
 goal_x:      45.0
-goal_y:      21.0
+goal_y:      0.0
 goal_z:        1.0
 
 goal_x_1:      43.0
@@ -121,9 +121,9 @@ rog_map:
   inflation_step: 2      
   unk_inflation_en: false
   unk_inflation_step: 1
-  map_size: [ 20, 20, 6] #60 50 / 70 20 / 60 60 
+  map_size: [ 200, 200, 6] #60 50 / 70 20 / 60 60 
   # If the map rolling is disable, the map origin [m] should be set.
-  fix_map_origin: [20 ,0,  0.5 ] #A*搜索的高度最低为0.5m，但不会限制安全飞行走廊 25 50 /25,-25(开启了map_sliding则不用调整)
+  fix_map_origin: [25 ,20,  0.5 ] #A*搜索的高度最低为0.5m，但不会限制安全飞行走廊 25 50 /25,-25(开启了map_sliding则不用调整)
   frontier_extraction_en: false
 
   # Virtual ceil and ground 这些参数不直接限制 A 搜索*，但会在地图中创建虚拟障碍物，影响实际的路径规划。
@@ -133,7 +133,7 @@ rog_map:
   load_pcd_en: false
 
   map_sliding:
-    enable: true
+    enable: false
     # The minimum distance [m] to slide the map.
     threshold: 0.05
 

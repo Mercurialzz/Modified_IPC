@@ -142,47 +142,6 @@ void PlannerClass::StateUpdate(void)
         odom_data.recv_new_msg = false;
 
     }
-    // //goal update
-    // if(goal_data.recv_new_msg)
-    // {
-    //     static Eigen::Vector3d last_goal;
-    //     if (last_goal != goal_data.new_goal)
-    //     {
-    //         std::lock_guard<std::mutex> lock(goal_mutex_);
-    //         goal_p_ = goal_data.new_goal;
-            
-    //         new_goal_flag_ = true;
-            
-    //         // 只有到达了目标点，才能切换到下一个目标
-    //         if(goal_reached_)
-    //         {
-    //             change_goal = -1 * change_goal;  // 切换目标标志
-    //             goal_reached_ = false;  // 重置到达标志
-    //             ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
-    //         }
-            
-    //         // 根据change_goal设置目标点
-    //         if(change_goal == 1)
-    //         {
-    //             // 模式1：使用参数中的目标点
-    //             goal_p_.x() = param.goal_x;
-    //             goal_p_.y() = param.goal_y;
-    //             goal_p_.z() = param.goal_z;
-    //             ROS_INFO("[px4ctrl] New goal - Mode 1: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
-    //         }
-    //         else if(change_goal == -1)
-    //         {
-    //             // 模式2：回到原点上方
-    //             goal_p_.x() = 0.0;
-    //             goal_p_.y() = 0.0;
-    //             goal_p_.z() = param.goal_z;
-    //             ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
-    //         }
-    //     }
-    //     last_goal = goal_data.new_goal;
-    //     goal_data.recv_new_msg = false;
-    // }
-    
     //goal update
     if(goal_data.recv_new_msg)
     {
@@ -197,8 +156,7 @@ void PlannerClass::StateUpdate(void)
             // 只有到达了目标点，才能切换到下一个目标
             if(goal_reached_)
             {
-                change_goal ++;  // 切换目标标志
-                if(change_goal == 5) change_goal = 1;
+                change_goal = -1 * change_goal;  // 切换目标标志
                 goal_reached_ = false;  // 重置到达标志
                 ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
             }
@@ -206,40 +164,82 @@ void PlannerClass::StateUpdate(void)
             // 根据change_goal设置目标点
             if(change_goal == 1)
             {
-                // 模式1：第一个点
-                goal_p_.x() = param.goal_x_1;
-                goal_p_.y() = param.goal_y_1;
-                goal_p_.z() = param.goal_z_1;
+                // 模式1：使用参数中的目标点
+                goal_p_.x() = param.goal_x;
+                goal_p_.y() = param.goal_y;
+                goal_p_.z() = param.goal_z;
                 ROS_INFO("[px4ctrl] New goal - Mode 1: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
             }
-            else if(change_goal == 2)
+            else if(change_goal == -1)
             {
-                // 模式2：第二个点
-                goal_p_.x() = param.goal_x_2;
-                goal_p_.y() = param.goal_y_2;
-                goal_p_.z() = param.goal_z_2;
-                ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
-            }
-            else if(change_goal == 3)
-            {
-                // 模式3：第三个点
-                goal_p_.x() = param.goal_x_3;
-                goal_p_.y() = param.goal_y_3;
-                goal_p_.z() = param.goal_z_3;
-                ROS_INFO("[px4ctrl] New goal - Mode 3: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
-            }
-            else if(change_goal == 4)
-            {
-                // 模式4：回到原点上方
+                // 模式2：回到原点上方
                 goal_p_.x() = 0.0;
                 goal_p_.y() = 0.0;
                 goal_p_.z() = param.goal_z;
-                ROS_INFO("[px4ctrl] New goal - Mode 4: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+                ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
             }
         }
         last_goal = goal_data.new_goal;
         goal_data.recv_new_msg = false;
     }
+    
+    // //goal update
+    // if(goal_data.recv_new_msg)
+    // {
+    //     static Eigen::Vector3d last_goal;
+    //     if (last_goal != goal_data.new_goal)
+    //     {
+    //         std::lock_guard<std::mutex> lock(goal_mutex_);
+    //         goal_p_ = goal_data.new_goal;
+            
+    //         new_goal_flag_ = true;
+            
+    //         // 只有到达了目标点，才能切换到下一个目标
+    //         if(goal_reached_)
+    //         {
+    //             change_goal ++;  // 切换目标标志
+    //             if(change_goal == 5) change_goal = 1;
+    //             goal_reached_ = false;  // 重置到达标志
+    //             ROS_INFO("[px4ctrl] Goal reached! Switching target mode...");
+    //         }
+            
+    //         // 根据change_goal设置目标点
+    //         if(change_goal == 1)
+    //         {
+    //             // 模式1：第一个点
+    //             goal_p_.x() = param.goal_x_1;
+    //             goal_p_.y() = param.goal_y_1;
+    //             goal_p_.z() = param.goal_z_1;
+    //             ROS_INFO("[px4ctrl] New goal - Mode 1: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+    //         }
+    //         else if(change_goal == 2)
+    //         {
+    //             // 模式2：第二个点
+    //             goal_p_.x() = param.goal_x_2;
+    //             goal_p_.y() = param.goal_y_2;
+    //             goal_p_.z() = param.goal_z_2;
+    //             ROS_INFO("[px4ctrl] New goal - Mode 2: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+    //         }
+    //         else if(change_goal == 3)
+    //         {
+    //             // 模式3：第三个点
+    //             goal_p_.x() = param.goal_x_3;
+    //             goal_p_.y() = param.goal_y_3;
+    //             goal_p_.z() = param.goal_z_3;
+    //             ROS_INFO("[px4ctrl] New goal - Mode 3: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+    //         }
+    //         else if(change_goal == 4)
+    //         {
+    //             // 模式4：回到原点上方
+    //             goal_p_.x() = 0.0;
+    //             goal_p_.y() = 0.0;
+    //             goal_p_.z() = param.goal_z;
+    //             ROS_INFO("[px4ctrl] New goal - Mode 4: (%.2f, %.2f, %.2f)", goal_p_.x(), goal_p_.y(), goal_p_.z());
+    //         }
+    //     }
+    //     last_goal = goal_data.new_goal;
+    //     goal_data.recv_new_msg = false;
+    // }
     // 检测无人机是否到达目标点
     if(!goal_reached_)
     {
