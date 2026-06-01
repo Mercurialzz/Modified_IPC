@@ -296,7 +296,7 @@ private:
         }
         sensor_msgs::PointCloud2 pc2;
         pcl::toROSMsg(pc,pc2);
-        pc2.header.frame_id = "world";
+        pc2.header.frame_id = "map";
         pc2.header.stamp = ros::Time::now();
         depth_pc_pub_.publish(pc2);
 
@@ -324,7 +324,7 @@ private:
         sensor_msgs::Image img_ros;
         img_ros.encoding = sensor_msgs::image_encodings::BGR8;
         img_ros.header.stamp = ros::Time::now();
-        img_ros.header.frame_id = "world";
+        img_ros.header.frame_id = "map";
         toImageMsg(img_ros, img);
         depth_img_pub_.publish(img_ros);
     }
@@ -353,7 +353,7 @@ private:
         sensor_msgs::Image img_ros;
         img_ros.encoding = sensor_msgs::image_encodings::BGR8;
         img_ros.header.stamp = ros::Time::now();
-        img_ros.header.frame_id = "world";
+        img_ros.header.frame_id = "map";
         toImageMsg(img_ros, img);
         depth_img_pub_.publish(img_ros);
     }

@@ -38,15 +38,13 @@ public:
 		double speed;
 	};
 
-
 	MsgTimeout msg_timeout;
 	RCReverse rc_reverse;
 	AutoTakeoffLand takeoff_land;
 
-
-
-    bool simu_flag;
+	    bool simu_flag;
     bool perfect_simu_flag;
+	bool odom_vel_in_body;
 	double mass;
 	double gra;
 	double max_manual_vel;
@@ -65,12 +63,12 @@ public:
 	double yaw_ki;
 	double yaw_rate_limit;
 	double yaw_i_limit;
-    
+
     double goal_x;
     double goal_y;
     double goal_z;
-    
-	double goal_x_1;
+
+    double goal_x_1;
     double goal_y_1;
     double goal_z_1;
     
@@ -78,11 +76,12 @@ public:
     double goal_y_2;
     double goal_z_2;
 
-	double goal_x_3;
-    double goal_y_3;
-    double goal_z_3;
-	
-    bool visualization_en;
+	    double goal_x_3;
+	    double goal_y_3;
+	    double goal_z_3;
+	    bool use_waypoint_sequence;
+		
+	    bool visualization_en;
     double corridor_bound_dis;
     double corridor_line_max_length;
     double safe_corridor_line_max_length;

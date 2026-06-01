@@ -147,7 +147,7 @@ void rcvOdometryCallbck(const nav_msgs::Odometry& odom)
   transform.setOrigin( tf::Vector3(cam2world(0,3), cam2world(1,3), cam2world(2,3) ));
   transform.setRotation(tf::Quaternion(cam2world_quat.x(), cam2world_quat.y(), cam2world_quat.z(),
   cam2world_quat.w()));
-  br.sendTransform(tf::StampedTransform(transform, last_odom_stamp, "world", "camera")); //publish
+  br.sendTransform(tf::StampedTransform(transform, last_odom_stamp, "map", "camera")); //publish
   transform from world frame to quadrotor frame.*/
 }
 

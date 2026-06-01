@@ -9,6 +9,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 
     read_essential_param(nh, "simulation", simu_flag);
     read_essential_param(nh, "perfect_simu", perfect_simu_flag);
+    read_essential_param(nh, "odom_vel_in_body", odom_vel_in_body);
     read_essential_param(nh, "mass", mass);
 	read_essential_param(nh, "gra", gra);
 	read_essential_param(nh, "ctrl_freq_max", ctrl_freq_max);
@@ -42,7 +43,8 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "goal_x_3", goal_x_3);
 	read_essential_param(nh, "goal_y_3", goal_y_3);
 	read_essential_param(nh, "goal_z_3", goal_z_3);
-	
+	read_essential_param(nh, "use_waypoint_sequence", use_waypoint_sequence);
+
 	read_essential_param(nh, "visualization_en", visualization_en);
 	read_essential_param(nh, "corridor_bound_dis", corridor_bound_dis);
 	read_essential_param(nh, "corridor_line_max_length", corridor_line_max_length);
@@ -68,7 +70,7 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "rc_reverse/throttle", rc_reverse.throttle);
 
 	read_essential_param(nh, "auto_takeoff_land/enable", takeoff_land.enable);
-    read_essential_param(nh, "auto_takeoff_land/enable_auto_arm", takeoff_land.enable_auto_arm);
+	read_essential_param(nh, "auto_takeoff_land/enable_auto_arm", takeoff_land.enable_auto_arm);
     read_essential_param(nh, "auto_takeoff_land/no_RC", takeoff_land.no_RC);
 	read_essential_param(nh, "auto_takeoff_land/takeoff_height", takeoff_land.height);
 	read_essential_param(nh, "auto_takeoff_land/takeoff_land_speed", takeoff_land.speed);

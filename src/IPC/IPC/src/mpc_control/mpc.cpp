@@ -55,7 +55,6 @@ bool MPCPlannerClass::Run(void)
     // solver.settings()->setTimeLimit(0.008);
     solver.settings()->setVerbosity(0); // osqp stop print
     solver.settings()->setWarmStart(true);
-    // solver.setWarmStart()
     solver.data()->setNumberOfConstraints(mpc_.A_sparse.rows());
     solver.data()->setNumberOfVariables(mpc_.f.rows());
     solver.data()->setHessianMatrix(mpc_.H_sparse);
@@ -67,6 +66,7 @@ bool MPCPlannerClass::Run(void)
     bool init_flag = solver.initSolver();
     bool solve_flag = true;
     if (init_flag) {
+        solver.setPrimalVariable(mpc_.u_optimal);
         solve_flag = solver.solve();
     } else {
         ROS_ERROR("[MPC]: Can't set mpc problem!");

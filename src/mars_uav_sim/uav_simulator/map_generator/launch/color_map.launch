@@ -5,7 +5,7 @@
         <param name="color/max_height" value="4.5" type="double"></param>
         <param name="color/map_type_name" value="Gray" type="string"></param>
 <!--        <param name="color/map_type_name" value="Gray" type="string"></param>-->
-        <param name="color/frame_id" value="world" type="string"></param>
+        <param name="color/frame_id" value="map" type="string"></param>
         <param name="color/publish_rate" value="0.1" type="double"></param>
         <param name="color/inverse_color" value="false" type="bool"></param>
     </node>

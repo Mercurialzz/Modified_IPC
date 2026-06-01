@@ -41,7 +41,7 @@ namespace rog_map {
         const bool IS = true;
         const bool NOT = false;
 
-        virtual const double getSystemWalltimeNow() = 0;
+        virtual const double getSystemTimeNow() = 0;
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW

@@ -38,6 +38,7 @@
 #ifdef USE_ROS1
 #ifndef ROG_MAP_ROS_HPP
 #define ROG_MAP_ROS_HPP
+#include <atomic>
 #include <shared_mutex>
 #include <rog_map/rog_map.h>
 #include <dynamic_reconfigure/server.h>
@@ -51,9 +52,9 @@ namespace rog_map {
 
     class ROGMapROS :public ROGMap {
         ros::NodeHandle nh_;
-        double& map_time_cost_record_;
+        std::atomic<double>& map_time_cost_record_;
 
-        const double getSystemWalltimeNow() override {
+        const double getSystemTimeNow() override {
             return ros::Time::now().toSec();
         }
 
@@ -85,7 +86,7 @@ namespace rog_map {
             static tf2_ros::TransformBroadcaster br_map_ego;
             geometry_msgs::TransformStamped transformStamped;
             transformStamped.header.stamp = ros::Time::now();
-            transformStamped.header.frame_id = "map";
+            transformStamped.header.frame_id = cfg_.frame_id;
             transformStamped.child_frame_id = "drone";
             transformStamped.transform.translation.x = odom_msg->pose.pose.position.x;
             transformStamped.transform.translation.y = odom_msg->pose.pose.position.y;
@@ -118,7 +119,7 @@ namespace rog_map {
 
         void updateCallback(const ros::TimerEvent& event) {
             static double last_time = 0;
-            double current_time = ros::WallTime::now().toSec();
+            double current_time = ros::Time::now().toSec();
 
             if (last_time == 0) {
                 last_time = current_time;
@@ -170,10 +171,10 @@ namespace rog_map {
             rc_.unfinished_frame_cnt = 0;
             rc_.updete_lock.unlock();
             //记录地图更新所花费的时间
-            ros::WallTime start_time = ros::WallTime::now();
+            ros::Time start_time = ros::Time::now();
             std::unique_lock<std::shared_timed_mutex> lock(map_mutex_);
             updateProbMap(temp_pc, temp_pose);
-            map_time_cost_record_ = (ros::WallTime::now() - start_time).toSec() * 1000.0;
+            map_time_cost_record_ = (ros::Time::now() - start_time).toSec() * 1000.0;
             // std::cout << BLUE << " -- [ROGMapROS] Map updated in " << time_used << " ms." << RESET << std::endl;
             writeTimeConsumingToLog(time_log_file_);
         }
@@ -265,38 +266,38 @@ namespace rog_map {
 
             /* Publish visualization range */
             visualization_msgs::MarkerArray mkr_arr;
-            visualizeBoundingBox(mkr_arr, box_min, box_max, "Visualization Range", Color::Purple());
+            visualizeBoundingBox(mkr_arr, box_min, box_max, "Visualization Range", Color::Purple(), cfg_.frame_id);
             visualizeText(mkr_arr, "Visualization Range Text", "Visualization Range", box_max + Vec3f(0, 0, 0.5),
-                          Color::Purple(), 0.6, 0);
+                          Color::Purple(), cfg_.frame_id, 0.6, 0);
 
             /* Publish local map range */
             Vec3f local_map_max(999, 999, 999), local_map_min(-999, -999, -999);
             boundBoxByLocalMap(local_map_min, local_map_max);
             visualizeBoundingBox(mkr_arr, local_map_min, local_map_max, "Local Map Range",
-                                 Color::Orange());
+                                 Color::Orange(), cfg_.frame_id);
             visualizeText(mkr_arr, "Local Map Range Text", "Local Map Range", local_map_max + Vec3f(0, 0, 1.0),
                           Color::Orange(),
-                          0.6, 0);
+                          cfg_.frame_id, 0.6, 0);
 
             /* Publish Ray-casting range */
             visualizeBoundingBox(mkr_arr, raycast_data_.cache_box_min, raycast_data_.cache_box_max,
                                  "Updating Range",
-                                 Color::Green());
+                                 Color::Green(), cfg_.frame_id);
             visualizeText(mkr_arr, "Updating Range Text", "Updating Range",
                           raycast_data_.cache_box_max + Vec3f(0, 0, 0.5),
-                          Color::Green(), 0.6, 0);
+                          Color::Green(), cfg_.frame_id, 0.6, 0);
 
             /* Publish Local map origin */
-            visualizePoint(mkr_arr, local_map_origin_d_, Color::Red(), "Local Map Origin", 0.2, 0);
+            visualizePoint(mkr_arr, local_map_origin_d_, Color::Red(), "Local Map Origin", cfg_.frame_id, 0.2, 0);
 
             if (cfg_.esdf_en) {
                 Vec3f esdf_box_max, esdf_box_min;
                 esdf_map_->getUpdatedBbox(esdf_box_min, esdf_box_max);
                 visualizeText(mkr_arr, "ESDF Map Text", "ESDF Map", esdf_box_max + Vec3f(0, 0, 1.0),
                               Color::Blue(),
-                              0.6, 0);
+                              cfg_.frame_id, 0.6, 0);
                 visualizeBoundingBox(mkr_arr, esdf_box_min, esdf_box_max, "ESDF Updating Range",
-                                     Color::Blue());
+                                     Color::Blue(), cfg_.frame_id);
             }
 
             vm_.mkr_arr_pub.publish(mkr_arr);
@@ -313,14 +314,14 @@ namespace rog_map {
             }
             pcl::toROSMsg(pcl_cloud, cloud);
             cloud.header.stamp = ros::Time::now();
-            cloud.header.frame_id = "map";
+            cloud.header.frame_id = cfg_.frame_id;
         }
 
     public:
         typedef shared_ptr<ROGMapROS> Ptr;
         mutable std::shared_timed_mutex map_mutex_;
 
-        ROGMapROS(const ros::NodeHandle& nh, const std::string& cfg_path,double &map_log_time) :nh_(nh), map_time_cost_record_(map_log_time){
+        ROGMapROS(const ros::NodeHandle& nh, const std::string& cfg_path, std::atomic<double> &map_log_time) :nh_(nh), map_time_cost_record_(map_log_time){
             cfg_ = rog_map::Config(cfg_path);
             init();
             /// Initialize visualization module
@@ -361,6 +362,7 @@ namespace rog_map {
                                          const Vec3f& box_max,
                                          const string& ns,
                                          const Color& color,
+                                         const std::string& frame_id,
                                          const double& size_x = 0.1,
                                          const double& alpha = 1.0,
                                          const bool& print_ns = true) {
@@ -374,7 +376,7 @@ namespace rog_map {
             int id = 0;
             visualization_msgs::Marker line_strip;
             line_strip.header.stamp = ros::Time::now();
-            line_strip.header.frame_id = "map";
+            line_strip.header.frame_id = frame_id;
             line_strip.action = visualization_msgs::Marker::ADD;
             line_strip.ns = ns;
             line_strip.pose.orientation.w = 1.0;
@@ -434,10 +436,11 @@ namespace rog_map {
                                   const std::string& text,
                                   const Vec3f& position,
                                   const Color& c = Color::White(),
+                                  const std::string& frame_id = "map",
                                   const double& size = 0.6,
                                   const int& id = -1) {
             visualization_msgs::Marker marker;
-            marker.header.frame_id = "map";
+            marker.header.frame_id = frame_id;
             marker.header.stamp = ros::Time::now();
             marker.action = visualization_msgs::Marker::ADD;
             marker.pose.orientation.w = 1.0;
@@ -464,6 +467,7 @@ namespace rog_map {
                                    const Vec3f& pt,
                                    Color color = Color::Pink(),
                                    std::string ns = "pt",
+                                   const std::string& frame_id = "map",
                                    double size = 0.1, int id = -1,
                                    const bool& print_ns = true) {
             visualization_msgs::Marker marker_ball;
@@ -472,7 +476,7 @@ namespace rog_map {
             if (isnan(pt.x()) || isnan(pt.y()) || isnan(pt.z())) {
                 return;
             }
-            marker_ball.header.frame_id = "map";
+            marker_ball.header.frame_id = frame_id;
             marker_ball.header.stamp = ros::Time::now();
             marker_ball.ns = ns.c_str();
             marker_ball.id = id >= 0 ? id : cnt++;
@@ -495,7 +499,7 @@ namespace rog_map {
             // add test
             if (print_ns) {
                 visualization_msgs::Marker marker;
-                marker.header.frame_id = "map";
+                marker.header.frame_id = frame_id;
                 marker.header.stamp = ros::Time::now();
                 marker.action = visualization_msgs::Marker::ADD;
                 marker.pose.orientation.w = 1.0;

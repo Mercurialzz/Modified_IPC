@@ -99,7 +99,7 @@ class Nodelet : public nodelet::Nodelet{
     nh.getParam("mass", mass);
     nh.getParam("g", g);
     so3ControlPtr_ = std::make_shared<SO3Controller>(mass, g);
-    so3cmd_.header.frame_id = "world";
+    so3cmd_.header.frame_id = "map";
     nh.getParam("gains/rot/x", so3cmd_.kR[0]);
     nh.getParam("gains/rot/y", so3cmd_.kR[1]);
     nh.getParam("gains/rot/z", so3cmd_.kR[2]);

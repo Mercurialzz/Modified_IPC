@@ -73,11 +73,11 @@ namespace vis_interface {
         void fatal(const std::string& msg) override { ROS_FATAL("%s", msg.c_str()); }
 
         double getSimTime() override {
-            return ros::WallTime::now().toSec();
+            return ros::Time::now().toSec();
         }
 
         void getSimTime(int32_t &sec, uint32_t &nsec) override{
-            ros::WallTime now = ros::WallTime::now();
+            ros::Time now = ros::Time::now();
             sec = now.sec;
             nsec = now.nsec;
         }

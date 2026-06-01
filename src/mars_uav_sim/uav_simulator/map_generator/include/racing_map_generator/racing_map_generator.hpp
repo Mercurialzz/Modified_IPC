@@ -83,7 +83,7 @@ namespace racing_map_generator {
             pcl_map_.height = 1;
             pcl_map_.is_dense = true;
             pcl::toROSMsg(pcl_map_, pc2_map_);
-            pc2_map_.header.frame_id = "world";
+            pc2_map_.header.frame_id = "map";
             map_is_ready = true;
             map_is_ready = true;
         }

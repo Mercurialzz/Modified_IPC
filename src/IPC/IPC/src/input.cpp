@@ -112,7 +112,7 @@ void RC_Data_t::check_validity()
 
 bool RC_Data_t::check_centered()
 {
-    bool centered = abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5 && abs(ch[0]) < 1e-5;
+    bool centered = std::abs(ch[0]) < 1e-5;
     return centered;
 }
 Dynamic_Data_t::Dynamic_Data_t() {
@@ -200,16 +200,16 @@ void Odom_Data_t::feed(nav_msgs::OdometryConstPtr pMsg)
     uav_utils::extract_odometry(pMsg, p, v, q, w);
 
     yaw = fromQuaternion2yaw(q);
-#define VEL_IN_BODY
-#ifdef VEL_IN_BODY /* Set to 1 if the velocity in odom topic is relative to current body frame, not to world frame.*/
-    Eigen::Quaternion<double> wRb_q(msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z);
-    Eigen::Matrix3d wRb = wRb_q.matrix();
-    v = wRb * v;
+    if (vel_in_body) /* true if the velocity in odom topic is relative to body frame, not world frame. */
+    {
+        Eigen::Quaternion<double> wRb_q(msg.pose.pose.orientation.w, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z);
+        Eigen::Matrix3d wRb = wRb_q.matrix();
+        v = wRb * v;
 
-    static int count = 0;
-    if (count++ % 500 == 0)
-        ROS_WARN("VEL_IN_BODY!!!");
-#endif
+        static int count = 0;
+        if (count++ % 500 == 0)
+            ROS_WARN("ODOM_VEL_IN_BODY enabled.");
+    }
 
     
     // check the frequency
@@ -217,9 +217,9 @@ void Odom_Data_t::feed(nav_msgs::OdometryConstPtr pMsg)
     static ros::Time last_clear_count_time = ros::Time(0.0);
     if ( (now - last_clear_count_time).toSec() > 1.0 )
     {
-        if ( one_min_count < 100 )
+        if ( one_min_count < 90 )
         {
-            ROS_WARN("ODOM frequency seems lower than 100Hz, which is too low!");
+            ROS_WARN("ODOM frequency seems lower than 90Hz, which is too low!");
         }
         one_min_count = 0;
         last_clear_count_time = now;
@@ -410,5 +410,3 @@ void Command_Data_t::feed(quadrotor_msgs::PositionCommandConstPtr pMsg)
     yaw = uav_utils::normalize_angle(msg.yaw);
     yaw_rate = msg.yaw_dot;
 }
-
-

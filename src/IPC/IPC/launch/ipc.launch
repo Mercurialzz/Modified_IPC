@@ -4,17 +4,25 @@
         <remap from="~cmd"          to="/planning/pos_cmd"/>
         <remap from="~astar_path"   to="/astar/path"/>
         <remap from="~grid_map"     to="/astar/grid_map"/>
-        <remap from="~sfc"          to="/mkr_arr"/>
         <remap from="~mpc_path"     to="/mpc/path"/>
         <remap from="~px4ctrl"      to="/mavros/setpoint_raw/attitude"/>
         <remap from="~goal_pub"     to="/mpc/goal"/>
-        
+        <!-- <remap from="~visualization/ipc_sfc" to="/mkr_arr"/> -->
+
         <!-- subscribe topic -->
-        <!-- <remap from="~local_pc"     to="/cloud_registered"/> -->
-        <!-- <remap from="~local_pc"     to="/livox/lidar"/> -->
+        <remap from="~state"        to="/mavros/state"/>
+        <remap from="~extended_state" to="/mavros/extended_state"/>
         <remap from="~odom"         to="/mavros/local_position/odom"/>
         <remap from="~imu"          to="/mavros/imu/data"/>
+        <remap from="~rc"           to="/mavros/rc/in"/>
+        <remap from="~battery"      to="/mavros/battery"/>
+        <remap from="~takeoff_land" to="/takeoff_land"/>
         <remap from="~goal"         to="/goal"/>
+
+        <!-- service -->
+        <remap from="~set_mode"     to="/mavros/set_mode"/>
+        <remap from="~arming"       to="/mavros/cmd/arming"/>
+        <remap from="~reboot"       to="/mavros/cmd/command"/>
 
         <rosparam command="load" file="$(find ipc)/config/param.yaml"/>
         <!-- 指定 ROGMap 使用的配置文件(这里使用同一个 param.yaml 中的 rog_map: 块) -->
@@ -22,7 +30,7 @@
 
     </node>
 
-    <node name="ipc" pkg="rviz" type="rviz" args="-d $(find ipc)/config/env_real.rviz"/>
+    <!-- <node name="ipc" pkg="rviz" type="rviz" args="-d $(find ipc)/config/env_real.rviz"/> -->
     
     <!-- <include file="$(find test_interface)/launch/so3_quadrotor_sim.xml"></include> -->
 </launch>

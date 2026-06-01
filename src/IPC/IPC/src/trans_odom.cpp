@@ -6,10 +6,8 @@
 #include <geometry_msgs/PoseStamped.h>
 
 // ROS Publishers & Subscribers
-ros::Publisher trans_odom_pub;
 ros::Publisher vision_pub;
 ros::Subscriber odom_sub;
-ros::Subscriber imu_sub;
 ros::Timer timer_vision_pub;
 
 // 全局变量
@@ -18,10 +16,10 @@ geometry_msgs::PoseStamped vision_pose;
 Eigen::Vector3d pub_pos;
 Eigen::Quaterniond pub_q;
 
-// IMU回调函数
-void imu_cb(const sensor_msgs::Imu::ConstPtr &msg) {
-    imu = *msg;
-}
+// // IMU回调函数
+// void imu_cb(const sensor_msgs::Imu::ConstPtr &msg) {
+//     imu = *msg;
+// }
 
 // // 定时发布vision pose的回调函数
 // void timercb_pub_vision_pose(const ros::TimerEvent &e) {
@@ -81,15 +79,9 @@ int main(int argc, char **argv) {
 
     // 初始化ROS通信
     vision_pub = nh.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 10);
-    trans_odom_pub = nh.advertise<nav_msgs::Odometry>("/trans_odom", 10);
     // timer_vision_pub = nh.createTimer(ros::Duration(0.1), timercb_pub_vision_pose);
     odom_sub = nh.subscribe<nav_msgs::Odometry>("/Odometry", 10, odom_cb);
-    imu_sub = nh.subscribe<sensor_msgs::Imu>("/mavros/imu/data", 100, imu_cb);
 
-    // ROS主循环
-    while (ros::ok()) {
-        ros::spinOnce();
-    }
-    
+    ros::spin();
     return 0;
 }

@@ -9,3 +9,9 @@ Third_Party/
 .catkin_workspace
 super_planner
 *.csv
+*~
+.*.lock*
+*.swp
+*.swo
+__pycache__/
+*.pyc

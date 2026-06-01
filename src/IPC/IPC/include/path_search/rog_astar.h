@@ -25,6 +25,7 @@
 #pragma once
 #include <ros/ros.h>
 #include "Eigen/Dense"
+#include <shared_mutex>
 #include "vector"
 #include "rog_map_ros/rog_map_ros1.hpp"
 #include "queue"
@@ -107,7 +108,7 @@ namespace path_search {
             rog_map::Vec3f local_map_center_d;
             double mission_rcv_WT{0};
             rog_map::Vec3f local_map_max_d, local_map_min_d;
-            std::mutex mission_mtx;
+            mutable std::shared_timed_mutex mission_mtx;
         } md_;
 
         /*Astar_param*/
@@ -122,6 +123,7 @@ namespace path_search {
             // 【新增】ESDF 策略参数
             double esdf_weight{1.0};      // 权重：越大越厌恶障碍物
             double safe_distance{1.0};    // 阈值：小于此距离开始产生代价 (单位：米)
+            double floyd_safe_distance{1.0}; // Floyd 直连最小安全距离（单位：米）
         } cfg_;
 
 
@@ -135,6 +137,7 @@ namespace path_search {
             read_essential_param(nh, "rog_astar/debug_visualization_en", cfg_.debug_visualization_en);
             read_essential_param(nh, "rog_astar/esdf_weight", cfg_.esdf_weight);
             read_essential_param(nh, "rog_astar/safe_distance", cfg_.safe_distance);
+            nh.param("rog_astar/floyd_safe_distance", cfg_.floyd_safe_distance, cfg_.safe_distance);
 
             cfg_.map_voxel_num = Vec3i(vox_[0], vox_[1], vox_[2]);
             cfg_.map_size_i = cfg_.map_voxel_num / 2;
@@ -170,7 +173,7 @@ namespace path_search {
 
         bool neighborHaveOne(const rog_map::GridType &type, const rog_map::Vec3i &src_id);
 
-    RET_CODE setup(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &goal_pt, const int &flag);
+        RET_CODE setupUnlocked(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &goal_pt, const int &flag);
 
         void retrievePath(GridNodePtr current, vector<GridNodePtr> &path);
 
@@ -244,5 +247,8 @@ namespace path_search {
      * @brief 检查单点是否无碰
      */
     bool CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map = true);
+
+    private:
+        bool CheckPointFreeUnlocked(const rog_map::Vec3f &point, bool use_inf_map);
     };
 }

@@ -219,7 +219,7 @@ void dynobjGenerate(const ros::TimerEvent &event) {
 
         pcl::toROSMsg(dynobj_points_vis, dynobj_points_pcd);
         dynobj_points_pcd.header = odom_.header;
-        dynobj_points_pcd.header.frame_id = "world";
+        dynobj_points_pcd.header.frame_id = "map";
         pub_dyncloud.publish(dynobj_points_pcd);
 
         kdtree_dyn.setInputCloud(dynobj_points_vis.makeShared());
@@ -1256,7 +1256,7 @@ void renderSensedPoints(const ros::TimerEvent &event) {
     pcl::toROSMsg(local_map_filled, local_map_pcd);
 
     local_map_pcd.header = odom_.header;
-    local_map_pcd.header.frame_id = "world";
+    local_map_pcd.header.frame_id = "map";
     pub_cloud.publish(local_map_pcd);
 
 
@@ -1266,7 +1266,7 @@ void renderSensedPoints(const ros::TimerEvent &event) {
     geometry_msgs::TransformStamped transform;
     ros::Time time_stamp_ = odom_.header.stamp;
     transform.header.stamp = time_stamp_;
-    transform.header.frame_id = "world";
+    transform.header.frame_id = "map";
     transform.child_frame_id = sensor_frame_id_;
 
     transform.transform.translation.x = pos.x();

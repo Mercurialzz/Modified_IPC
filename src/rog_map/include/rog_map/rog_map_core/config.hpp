@@ -122,7 +122,7 @@ namespace rog_map {
             loader.LoadParam(name_space + "/visualization/enable", visualization_en, false);
             loader.LoadParam(name_space + "/visualization/use_dynamic_reconfigure", use_dynamic_reconfigure, false);
             loader.LoadParam(name_space + "/visualization/pub_unknown_map_en", pub_unknown_map_en, false);
-            loader.LoadParam(name_space + "/visualization/frame_id", frame_id, string("world"));
+            loader.LoadParam(name_space + "/visualization/frame_id", frame_id, string("map"));
             loader.LoadParam(name_space + "/visualization/time_rate", viz_time_rate, 0.0);
             loader.LoadParam(name_space + "/visualization/frame_rate", viz_frame_rate, 0);
             vector<double> temp_vis_range;

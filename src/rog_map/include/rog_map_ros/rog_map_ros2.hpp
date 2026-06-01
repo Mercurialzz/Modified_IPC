@@ -56,11 +56,11 @@ namespace rog_map {
         std::shared_ptr<tf2_ros::TransformBroadcaster> br_map_ego_;
 
 
-        const double getSystemWalltimeNow() override {
+        const double getSystemTimeNow() override {
             return nh_->get_clock()->now().seconds();
         }
 
-        void getSystemWalltimeNow(rclcpp::Time& _in) {
+        void getSystemTimeNow(rclcpp::Time& _in) {
             _in = nh_->get_clock()->now();
         };
 

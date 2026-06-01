@@ -82,10 +82,10 @@ namespace path_search {
      *  3. 根据分辨率与 map_size_i 计算局部包围盒 min/max。
      *  4. 可选可视化局部搜索边界。
      */
-    RET_CODE Astar::setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag) {
+    RET_CODE Astar::setupUnlocked(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag) {
         md_.start_pt = start_pt;
         md_.goal_pt = goal_pt;
-    md_.mission_rcv_WT = vis_ptr_->getSimTime();
+        md_.mission_rcv_WT = vis_ptr_->getSimTime();
         md_.use_inf_map = flag & ON_INF_MAP;
         md_.use_prob_map = flag & ON_PROB_MAP;
         md_.unknown_as_occ = flag & UNKNOWN_AS_OCCUPIED;
@@ -322,10 +322,14 @@ namespace path_search {
     RET_CODE Astar::pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                            const int &flag,
                                            rog_map::vec_Vec3f &out_path, const double &time_out) {
-        RET_CODE setup_ret = setup(start_pt, end_pt, flag);
-        if (setup_ret != SUCCESS) {
-            return setup_ret;
+        {
+            std::unique_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+            RET_CODE setup_ret = setupUnlocked(start_pt, end_pt, flag);
+            if (setup_ret != SUCCESS) {
+                return setup_ret;
+            }
         }
+        std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
         out_path.clear();
         double time_1 = vis_ptr_->getSimTime();
         ++rounds_;
@@ -652,10 +656,14 @@ namespace path_search {
      */
     RET_CODE Astar::escapePathSearch(const rog_map::Vec3f &start_pt, const int flag, rog_map::vec_Vec3f &out_path) {
         // 逃逸搜索使用起点作为中心，goal 传入同起点
-        RET_CODE setup_ret = setup(start_pt, start_pt, flag);
-        if (setup_ret != SUCCESS) {
-            return setup_ret;
+        {
+            std::unique_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+            RET_CODE setup_ret = setupUnlocked(start_pt, start_pt, flag);
+            if (setup_ret != SUCCESS) {
+                return setup_ret;
+            }
         }
+        std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
 
         double time_1 = vis_ptr_->getSimTime();
         ++rounds_;
@@ -877,11 +885,44 @@ namespace path_search {
         waypoint.clear();
         SimplifyPath(astar_path, waypoint);
 
+        auto ShortcutHasClearance = [&](const rog_map::Vec3f &p1, const rog_map::Vec3f &p2) {
+            if (!CheckLineObstacleFree(p1, p2)) {
+                return false;
+            }
+            if (cfg_.floyd_safe_distance <= 0.0) {
+                return true;
+            }
+
+            std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+            const rog_map::Vec3f vec = p2 - p1;
+            const double seg_len = vec.norm();
+            if (seg_len < 1e-6) {
+                return true;
+            }
+
+            // 比常规碰撞检查更密集采样，防止捷径从障碍边缘擦过。
+            const double sample_step = std::max(1e-3, md_.resolution * 0.5);
+            const int sample_num = std::max(1, static_cast<int>(seg_len / sample_step));
+            for (int i = 0; i <= sample_num; i++) {
+                const double ratio = static_cast<double>(i) / static_cast<double>(sample_num);
+                const rog_map::Vec3f pos = p1 + vec * ratio;
+                if (!insideLocalMap(pos)) {
+                    continue;
+                }
+
+                const double dist_to_obs = map_ptr_->getDist(pos);
+                if (dist_to_obs < cfg_.floyd_safe_distance) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
         // Floyd 两次迭代：若后点与前点直线可达，移除中间拐点
         for (int time = 0; time < 2; time++) {
             for (int i = static_cast<int>(waypoint.size()) - 1; i > 0; i--) {
                 for (int j = 0; j < i - 1; j++) {
-                    if (CheckLineObstacleFree(waypoint[i], waypoint[j])) {
+                    if (ShortcutHasClearance(waypoint[i], waypoint[j])) {
                         for (int k = i - 1; k > j; k--) {
                             waypoint.erase(waypoint.begin() + k);
                         }
@@ -894,12 +935,20 @@ namespace path_search {
     }
 
     bool Astar::CheckLineObstacleFree(const rog_map::Vec3f &p1, const rog_map::Vec3f &p2) {
-        rog_map::Vec3f vec = p2 - p1;
-        int sample_num = vec.norm() / md_.resolution; // 依据栅格分辨率做等距采样
-        if (sample_num <= 0) return true;
-        for (int i = 1; i <= sample_num; i++) {
-            rog_map::Vec3f pos = p1 + vec * (double(i) / (sample_num + 1));
+        std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+        const rog_map::Vec3f vec = p2 - p1;
+        const double seg_len = vec.norm();
+        if (seg_len < 1e-6) {
+            return true;
+        }
+
+        const int sample_num = std::max(1, static_cast<int>(seg_len / md_.resolution));
+
+        for (int i = 0; i <= sample_num; i++) {
+            const double ratio = static_cast<double>(i) / static_cast<double>(sample_num);
+            const rog_map::Vec3f pos = p1 + vec * ratio;
             if (!insideLocalMap(pos)) continue; // 局部地图外忽略
+
             rog_map::GridType pos_type;
             if (md_.use_inf_map) {
                 pos_type = map_ptr_->getInfGridType(pos);
@@ -910,10 +959,11 @@ namespace path_search {
         }
         return true;
     }
+
     // 修改 CheckPointFree 实现
-    bool Astar::CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map) { // <--- 增加参数
+    bool Astar::CheckPointFreeUnlocked(const rog_map::Vec3f &point, bool use_inf_map) {
         if (!insideLocalMap(point)) return true; 
-        
+
         // 根据参数决定查哪张图
         rog_map::GridType gt;
         if (use_inf_map) {
@@ -927,18 +977,25 @@ namespace path_search {
         return true;
     }
 
+    bool Astar::CheckPointFree(const rog_map::Vec3f &point, bool use_inf_map) { // <--- 增加参数
+        std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
+        return CheckPointFreeUnlocked(point, use_inf_map);
+    }
+
     // 修改 CheckPathFree 实现
     bool Astar::CheckPathFree(const rog_map::vec_Vec3f& path, bool use_inf_map) { // <--- 增加参数
+        std::shared_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
         if (path.empty()) return true;
 
         for (const auto &pt : path) {
             // 将参数透传给 CheckPointFree
-            if (!CheckPointFree(pt, use_inf_map)) return false; 
+            if (!CheckPointFreeUnlocked(pt, use_inf_map)) return false; 
         }
         return true;
     }
 
     void Astar::updateLocalMapCenter(const rog_map::Vec3f& center) {
+        std::unique_lock<std::shared_timed_mutex> ctx_lock(md_.mission_mtx);
         // 1. 更新中心点坐标
         md_.local_map_center_d = center;
         
