@@ -125,6 +125,14 @@ Visualization Manager:
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
+      Marker Topic: /ipc_node/visualization/velocity_text
+      Name: VelocityText
+      Namespaces:
+        velocity_text: true
+      Queue Size: 10
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
       Marker Topic: /ipc_node/rog_map/map_bound
       Name: MarkerArray
       Namespaces:

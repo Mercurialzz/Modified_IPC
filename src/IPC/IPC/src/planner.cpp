@@ -681,7 +681,7 @@ void PlannerClass::process()
     // Eigen::Vector3d next_pt = Eigen::Vector3d(odom_data.p.x() + 0.5f, odom_data.p.y() , odom_data.p.z());
     // GenerateAPolytopeFromLine(odom_data.p,next_pt,planes, 0);
 
-    // ROS_INFO_THROTTLE(1,"odom_vel norm: %.2f",odom_data.v.norm());
+    vis_ptr_->vizVelocity(super_utils::Vec3f(odom_data.p.x(), odom_data.p.y(), odom_data.p.z()), odom_data.v.norm());
     // STEP4: publish control commands to mavros
     if (!sim_mode_) {
         publish_bodyrate_ctrl(u, now_time);
